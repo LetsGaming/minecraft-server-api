@@ -1,0 +1,74 @@
+# minecraft-bot API Server — Configuration Reference
+#
+# Copy this file to variables.txt and fill in your values, then either:
+#
+#   A) Point the server to it with the VARIABLES_TXT_PATH env var:
+#        VARIABLES_TXT_PATH=/path/to/variables.txt node index.js
+#
+#   B) Place it at ../common/variables.txt relative to the api-server root.
+#      This is the default search path — no env var needed.
+#      It matches the server-setup deployment layout:
+#        <instance>/api-server/   ← repo root
+#        <instance>/common/variables.txt   ← this file
+#
+# Alternatively, skip this file entirely and set everything as environment
+# variables. All keys below are valid env var names except USER — use
+# LINUX_USER instead to avoid overriding the shell's built-in $USER.
+#
+# Environment variables take precedence over values in this file.
+#
+# Keys marked [required] must be supplied (via file or env var) for the
+# server to start.
+
+# ── Required ──────────────────────────────────────────────────────────────────
+
+# [required] Absolute path to the Minecraft server directory.
+# Must contain server.properties, whitelist.json, and logs/latest.log.
+SERVER_PATH="/opt/minecraft/survival"
+
+# [required] Identifier for this instance. Used as the screen session name,
+# PM2 process name, and the :id segment in API paths (/instances/:id/...).
+INSTANCE_NAME="survival"
+
+# ── Network ───────────────────────────────────────────────────────────────────
+
+# Port the API server listens on.
+API_SERVER_PORT="3000"
+
+# Shared secret for the x-api-key header. All routes except GET /health
+# require this header. Leave empty to disable authentication entirely —
+# not recommended for internet-facing deployments.
+API_SERVER_KEY="replace-with-a-long-random-secret"
+
+# ── Linux user ────────────────────────────────────────────────────────────────
+
+# Linux user that owns the Minecraft process and screen session.
+# sudo commands are run as this user.
+# In variables.txt this key is USER; as an env var, use LINUX_USER.
+USER="minecraft"
+
+# ── RCON ──────────────────────────────────────────────────────────────────────
+
+# Set to "true" to enable RCON for sending commands and querying player lists.
+# Falls back to screen if RCON is disabled or the connection fails.
+USE_RCON="false"
+RCON_HOST="localhost"
+RCON_PORT="25575"
+RCON_PASSWORD=""
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+
+# Absolute path to the backups root directory. Optional — only required if
+# you use the GET /instances/:id/backups endpoint.
+BACKUPS_PATH="/opt/minecraft/backups/survival"
+
+# ── Scripts directory (env var only, no variables.txt equivalent) ─────────────
+#
+# Directory that contains the management scripts (start.sh, shutdown.sh, etc.).
+# Only needed if you use POST /instances/:id/scripts/run.
+#
+# Default when running inside a server-setup deployment:
+#   parent of the api-server directory (<instance>/)
+#
+# For standalone deployments with custom scripts, set via env var:
+#   SCRIPTS_DIR=/path/to/your/scripts
