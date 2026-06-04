@@ -1,53 +1,31 @@
 "use strict";
 
-const { describe, it, before, after } = require("node:test");
+const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
-const os = require("os");
-const fs = require("fs");
+const os   = require("os");
+const fs   = require("fs");
 const path = require("path");
-
-let tmpDir;
-
-before(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mc-ops-test-"));
-  const commonDir = path.join(tmpDir, "common");
-  fs.mkdirSync(commonDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(commonDir, "variables.txt"),
-    [
-      `SERVER_PATH=${tmpDir}`,
-      "INSTANCE_NAME=testserver",
-      "API_SERVER_PORT=3099",
-      "API_SERVER_KEY=",
-      "USE_RCON=false",
-    ].join("\n"),
-  );
-});
-
-after(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-});
 
 // ── getStats path-traversal guard (F-001 / A-11) ──────────────────────────
 
 describe("getStats path guard", () => {
-  it("blocks a traversal UUID with startsWith logic", () => {
-    const levelName = "world";
-    const statsDir = path.join(tmpDir, levelName, "stats");
-    const uuid = "../../server.properties";
+  it("blocks a traversal UUID", () => {
+    const statsDir = path.join(os.tmpdir(), "world", "stats");
+    const uuid     = "../../server.properties";
     const resolved = path.resolve(statsDir, `${uuid}.json`);
-    const rel = path.relative(statsDir, resolved);
+    const rel      = path.relative(statsDir, resolved);
     assert.equal(rel.startsWith("..") || path.isAbsolute(rel), true);
   });
 
   it("accepts a valid UUID (A-11 path.relative guard)", () => {
-    const levelName = "world";
-    const statsDir = path.join(tmpDir, levelName, "stats");
+    const tmpDir   = fs.mkdtempSync(path.join(os.tmpdir(), "mc-ops-test-"));
+    const statsDir = path.join(tmpDir, "world", "stats");
     fs.mkdirSync(statsDir, { recursive: true });
-    const uuid = "550e8400-e29b-41d4-a716-446655440000";
+    const uuid     = "550e8400-e29b-41d4-a716-446655440000";
     const resolved = path.resolve(statsDir, `${uuid}.json`);
-    const rel = path.relative(statsDir, resolved);
+    const rel      = path.relative(statsDir, resolved);
     assert.equal(rel.startsWith("..") || path.isAbsolute(rel), false);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });
 
@@ -59,11 +37,12 @@ describe("tailLog lines parameter validation", () => {
     return Number.isNaN(parsed) ? 10 : Math.min(Math.max(parsed, 1), 500);
   }
 
-  it("clamps to 500 for large integers", () => assert.equal(sanitize("9999"), 500));
-  it("blocks scientific notation bypass", () => assert.equal(sanitize("1e6"), 1));
-  it("falls back to 10 for NaN input", () => assert.equal(sanitize("abc"), 10));
-  it("passes through a normal value", () => assert.equal(sanitize("50"), 50));
-  it("clamps minimum to 1", () => { assert.equal(sanitize("0"), 1); assert.equal(sanitize("-5"), 1); });
+  it("clamps to 500 for large integers",       () => assert.equal(sanitize("9999"), 500));
+  it("blocks scientific notation bypass",      () => assert.equal(sanitize("1e6"),  1));
+  it("falls back to 10 for NaN input",         () => assert.equal(sanitize("abc"),  10));
+  it("passes through a normal value",          () => assert.equal(sanitize("50"),   50));
+  it("clamps minimum to 1 (zero)",             () => assert.equal(sanitize("0"),    1));
+  it("clamps minimum to 1 (negative)",         () => assert.equal(sanitize("-5"),   1));
 });
 
 // ── UUID allowlist regex (F-001) ──────────────────────────────────────────
@@ -84,8 +63,8 @@ describe("UUID allowlist regex", () => {
     "550e8400e29b41d4a716446655440000",
   ];
 
-  for (const u of valid) it(`accepts ${u}`, () => assert.equal(UUID_RE.test(u), true));
-  for (const u of invalid) it(`rejects "${u}"`, () => assert.equal(UUID_RE.test(u), false));
+  for (const u of valid)   it(`accepts ${u}`,    () => assert.equal(UUID_RE.test(u), true));
+  for (const u of invalid) it(`rejects "${u}"`,  () => assert.equal(UUID_RE.test(u), false));
 });
 
 // ── A-01: screen injection sanitisation ──────────────────────────────────
@@ -99,21 +78,13 @@ describe("sendCommand screen injection sanitisation (A-01)", () => {
   it("strips carriage return that would inject a second command", () => {
     const result = sanitize("list\r/op attacker");
     assert.equal(result.includes("\r"), false);
-    assert.equal(result, "/list/op attacker"); // CR gone, safe remainder
+    assert.equal(result, "/list/op attacker");
   });
 
-  it("strips newline", () => {
-    const result = sanitize("say hello\nworld");
-    assert.equal(result.includes("\n"), false);
-  });
-
-  it("strips null byte", () => {
-    const result = sanitize("list\x00inject");
-    assert.equal(result.includes("\x00"), false);
-  });
-
+  it("strips newline",    () => assert.equal(sanitize("say hello\nworld").includes("\n"), false));
+  it("strips null byte",  () => assert.equal(sanitize("list\x00inject").includes("\x00"), false));
   it("leaves a clean command untouched", () => {
-    assert.equal(sanitize("list"), "/list");
+    assert.equal(sanitize("list"),             "/list");
     assert.equal(sanitize("/say hello world"), "/say hello world");
   });
 });
@@ -122,20 +93,17 @@ describe("sendCommand screen injection sanitisation (A-01)", () => {
 
 describe("getLevelName cache (A-03)", () => {
   it("returns 'world' when server.properties does not exist", async () => {
-    // Simulate the cache being cold and the file missing
+    const tmpDir    = fs.mkdtempSync(path.join(os.tmpdir(), "mc-ops-test-"));
     const propsPath = path.join(tmpDir, "server.properties");
-    if (fs.existsSync(propsPath)) fs.unlinkSync(propsPath);
 
-    // Inline the cache logic to verify it without requiring config side-effects
-    let cache = null;
-    let cachedAt = 0;
+    let cache = null, cachedAt = 0;
     const TTL = 60_000;
 
     async function getLevelName() {
       if (cache && Date.now() - cachedAt < TTL) return cache;
       try {
         const text = fs.readFileSync(propsPath, "utf-8");
-        const m = text.match(/^level-name\s*=\s*(.+)$/m);
+        const m    = text.match(/^level-name\s*=\s*(.+)$/m);
         cache = m?.[1]?.trim() ?? "world";
       } catch {
         cache = "world";
@@ -145,21 +113,22 @@ describe("getLevelName cache (A-03)", () => {
     }
 
     assert.equal(await getLevelName(), "world");
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("reads level-name from server.properties", async () => {
+  it("reads level-name from server.properties and caches it", async () => {
+    const tmpDir    = fs.mkdtempSync(path.join(os.tmpdir(), "mc-ops-test-"));
     const propsPath = path.join(tmpDir, "server.properties");
     fs.writeFileSync(propsPath, "level-name=survival_world\n");
 
-    let cache = null;
-    let cachedAt = 0;
+    let cache = null, cachedAt = 0;
     const TTL = 60_000;
 
     async function getLevelName() {
       if (cache && Date.now() - cachedAt < TTL) return cache;
       try {
         const text = fs.readFileSync(propsPath, "utf-8");
-        const m = text.match(/^level-name\s*=\s*(.+)$/m);
+        const m    = text.match(/^level-name\s*=\s*(.+)$/m);
         cache = m?.[1]?.trim() ?? "world";
       } catch {
         cache = "world";
@@ -169,8 +138,8 @@ describe("getLevelName cache (A-03)", () => {
     }
 
     assert.equal(await getLevelName(), "survival_world");
-    // Second call should use cache (file could be deleted — cache still returns value)
     fs.unlinkSync(propsPath);
-    assert.equal(await getLevelName(), "survival_world");
+    assert.equal(await getLevelName(), "survival_world"); // served from cache
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });

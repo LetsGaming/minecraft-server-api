@@ -4,107 +4,135 @@ const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
 
-const { SERVER_PATH, INSTANCE_NAME } = require("./config");
-
-const LOG_FILE = path.join(SERVER_PATH, "logs", "latest.log");
-
 // A-05: cap how many bytes we read per polling cycle. If the server was
-// offline while the bot restarted (logLastSize = 0) and the log file is
+// offline while the api-server restarted (lastSize = 0) and the log is
 // hundreds of MB, reading it all at once would spike memory and stall the
-// event loop. Missed content is caught up on the next cycle(s).
+// event loop. Missed content is caught up across subsequent cycles.
 const MAX_DELTA_BYTES = 1 * 1024 * 1024; // 1 MB per cycle
 
-const sseClients = new Set();
-let logLastSize = 0;
-let logReading = false;
+/**
+ * Initialise log-stream watchers for all configured instances.
+ *
+ * @param {Record<string, { id: string, serverPath: string }>} instances
+ * @returns {{
+ *   addClient(instanceId: string, res: any): void,
+ *   removeClient(instanceId: string, res: any): void,
+ *   dispose(): void
+ * }}
+ */
+function init(instances) {
+  // Per-instance SSE client sets
+  const clientsByInstance = new Map(); // instanceId → Set<res>
 
-async function processLogChanges(event) {
-  if (logReading) return;
-  logReading = true;
-  try {
-    if (event === "rename") {
-      try {
-        fs.accessSync(LOG_FILE);
-        logLastSize = 0;
-      } catch {
-        return;
-      }
-    }
+  // Per-instance read state
+  const stateByInstance = new Map(); // instanceId → { lastSize, reading }
 
-    let stat;
+  // All watcher/poller handles for clean shutdown (A-10)
+  const handles = [];
+
+  for (const [id, cfg] of Object.entries(instances)) {
+    const logFile = path.join(cfg.serverPath, "logs", "latest.log");
+    const clients = new Set();
+    const state   = { lastSize: 0, reading: false };
+
+    clientsByInstance.set(id, clients);
+    stateByInstance.set(id, state);
+
+    // Seed the read offset so we don't replay the entire log on first connect
     try {
-      stat = fs.statSync(LOG_FILE);
+      state.lastSize = fs.statSync(logFile).size;
     } catch {
-      return;
+      /* log doesn't exist yet — start at 0 */
     }
 
-    if (stat.size < logLastSize) logLastSize = 0;
-    if (stat.size === logLastSize) return;
+    // Capture id and logFile by value for this iteration's closure
+    const instanceId  = id;
+    const logFilePath = logFile;
 
-    // A-05: clamp the read window to MAX_DELTA_BYTES per cycle
-    const readEnd = Math.min(stat.size - 1, logLastSize + MAX_DELTA_BYTES - 1);
-
-    const stream = fs.createReadStream(LOG_FILE, {
-      start: logLastSize,
-      end: readEnd,
-    });
-    const rl = readline.createInterface({ input: stream });
-
-    for await (const line of rl) {
-      const payload = `data: ${JSON.stringify({ line, serverId: INSTANCE_NAME })}\n\n`;
-      for (const res of [...sseClients]) {
-        try {
-          res.write(payload);
-        } catch {
-          sseClients.delete(res);
+    async function processLogChanges(event) {
+      if (state.reading) return;
+      state.reading = true;
+      try {
+        if (event === "rename") {
+          try {
+            fs.accessSync(logFilePath);
+            state.lastSize = 0;
+          } catch {
+            return;
+          }
         }
+
+        let stat;
+        try {
+          stat = fs.statSync(logFilePath);
+        } catch {
+          return;
+        }
+
+        if (stat.size < state.lastSize) state.lastSize = 0;
+        if (stat.size === state.lastSize) return;
+
+        // A-05: clamp the read window
+        const readEnd = Math.min(stat.size - 1, state.lastSize + MAX_DELTA_BYTES - 1);
+
+        const stream = fs.createReadStream(logFilePath, { start: state.lastSize, end: readEnd });
+        const rl     = readline.createInterface({ input: stream });
+
+        for await (const line of rl) {
+          const payload = `data: ${JSON.stringify({ line, serverId: instanceId })}\n\n`;
+          for (const res of [...clients]) {
+            try {
+              res.write(payload);
+            } catch {
+              clients.delete(res);
+            }
+          }
+        }
+
+        state.lastSize = readEnd + 1;
+      } catch {
+        /* swallow */
+      } finally {
+        state.reading = false;
       }
     }
 
-    // Advance only as far as we actually read
-    logLastSize = readEnd + 1;
-  } catch {
-    /* swallow */
-  } finally {
-    logReading = false;
-  }
-}
+    // fs.watch with polling fallback
+    let watcher = null;
+    try {
+      watcher = fs.watch(path.dirname(logFilePath), (event, filename) => {
+        if (filename === "latest.log") processLogChanges(event).catch(() => {});
+      });
+      watcher.on("error", () => {});
+    } catch {
+      /* polling only */
+    }
 
-function addClient(res) {
-  sseClients.add(res);
-}
+    const poller = setInterval(
+      () => processLogChanges("change").catch(() => {}),
+      1000,
+    );
 
-function removeClient(res) {
-  sseClients.delete(res);
-}
-
-// A-10: init() returns the watcher and poller handles so the caller can
-// perform a clean shutdown (close watcher, clear interval) on SIGTERM.
-function init() {
-  // Seed offset so we don't replay the whole log on first connect
-  try {
-    logLastSize = fs.statSync(LOG_FILE).size;
-  } catch {
-    logLastSize = 0;
+    handles.push({ watcher, poller });
   }
 
-  // fs.watch with polling fallback
-  let watcher = null;
-  try {
-    watcher = fs.watch(path.dirname(LOG_FILE), (event, filename) => {
-      if (filename === "latest.log") processLogChanges(event).catch(() => {});
-    });
-    watcher.on("error", () => {});
-  } catch {
-    /* polling only */
+  function addClient(instanceId, res) {
+    clientsByInstance.get(instanceId)?.add(res);
   }
 
-  const poller = setInterval(
-    () => processLogChanges("change").catch(() => {}),
-    1000,
-  );
+  function removeClient(instanceId, res) {
+    clientsByInstance.get(instanceId)?.delete(res);
+  }
 
-  return { watcher, poller };
+  // A-10: release all watchers and pollers on SIGTERM
+  function dispose() {
+    for (const { watcher, poller } of handles) {
+      clearInterval(poller);
+      if (watcher) watcher.close();
+    }
+  }
+
+  return { addClient, removeClient, dispose };
 }
 
-module.exports = { init, addClient, removeClient };
+module.exports = { init };

@@ -1,0 +1,26 @@
+{
+  "port": 3000,
+  "apiKey": "replace-with-a-long-random-secret",
+  "instances": {
+    "survival": {
+      "serverPath":   "/home/minecraft/minecraft-server/survival",
+      "scriptsDir":   "/home/minecraft/minecraft-server/scripts/survival",
+      "linuxUser":    "minecraft",
+      "useRcon":      true,
+      "rconHost":     "localhost",
+      "rconPort":     25575,
+      "rconPassword": "your-rcon-password",
+      "backupsPath":  "/home/minecraft/backups/survival"
+    },
+    "creative": {
+      "serverPath":   "/home/minecraft/minecraft-server/creative",
+      "scriptsDir":   "/home/minecraft/minecraft-server/scripts/creative",
+      "linuxUser":    "minecraft",
+      "useRcon":      true,
+      "rconHost":     "localhost",
+      "rconPort":     25576,
+      "rconPassword": "your-rcon-password",
+      "backupsPath":  "/home/minecraft/backups/creative"
+    }
+  }
+}
