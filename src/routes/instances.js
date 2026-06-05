@@ -13,8 +13,10 @@ function validateUuid(req, res, next) {
   next();
 }
 
-// F-001: safe args pattern
-const SAFE_ARG = /^[\w.@/-]{1,128}$/;
+// F-001: safe args pattern — no forward-slash to prevent relative-path
+// traversal (e.g. "../../evil.sh") in script arguments. Scripts that
+// legitimately need a path argument should receive it via instance config.
+const SAFE_ARG = /^[\w.@-]{1,128}$/;
 
 function validateArgs(args) {
   if (args === undefined || args === null) return true;
