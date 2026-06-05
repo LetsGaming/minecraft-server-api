@@ -1,4 +1,4 @@
-# mc-api-server
+# mc-server-api
 
 Lightweight HTTP wrapper for a Minecraft server instance. Exposes server operations — start/stop/restart, RCON commands, stats, logs, whitelist, backups — over a simple REST API secured with an API key.
 
