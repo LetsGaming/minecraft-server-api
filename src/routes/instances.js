@@ -36,6 +36,14 @@ function validateArgs(args) {
 function createRouter(opsRegistry, logStreamAPI) {
   const router = express.Router();
 
+  // ── GET /instances ──────────────────────────────────────────────────────
+  // Returns the list of configured instance IDs so clients can discover
+  // what is deployed without needing out-of-band configuration.
+  router.get("/", (_req, res) => {
+    const instances = [...opsRegistry.keys()].map((id) => ({ id }));
+    res.json({ instances });
+  });
+
   // Resolve the instance and attach its ops to the request.
   // Returns 404 for any unknown instance id.
   function instanceGuard(req, res, next) {

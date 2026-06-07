@@ -129,4 +129,29 @@ if (fs.existsSync(CONFIG_FILE)) {
   }
 }
 
+// ── Environment variable overrides ────────────────────────────────────────
+// Env vars take precedence over config files, enabling Docker/K8s secrets
+// injection without touching any file on disk.
+//
+// Supported variables:
+//   MC_API_KEY      — overrides API_KEY for all instances
+//   MC_PORT         — overrides the HTTP listen port
+//
+// Per-instance RCON passwords can be overridden via:
+//   RCON_PASSWORD_<INSTANCE_ID_UPPER>  e.g. RCON_PASSWORD_SURVIVAL
+if (process.env.MC_API_KEY) {
+  config.API_KEY = process.env.MC_API_KEY;
+}
+if (process.env.MC_PORT) {
+  const p = parseInt(process.env.MC_PORT, 10);
+  if (!isNaN(p)) config.PORT = p;
+}
+// Per-instance RCON password override
+if (config.instances) {
+  for (const [id, inst] of Object.entries(config.instances)) {
+    const envKey = `RCON_PASSWORD_${id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+    if (process.env[envKey]) inst.rconPassword = process.env[envKey];
+  }
+}
+
 module.exports = config;

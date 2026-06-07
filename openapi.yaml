@@ -1,0 +1,373 @@
+openapi: "3.1.0"
+
+info:
+  title: minecraft-api-server
+  version: "2.0.0"
+  description: |
+    REST API for managing Minecraft server instances.
+    All endpoints (except /health) require the `x-api-key` header.
+
+servers:
+  - url: "http://localhost:3000"
+    description: Local default
+
+security:
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+
+  schemas:
+    InstanceRef:
+      type: object
+      properties:
+        id:
+          type: string
+          example: survival
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+    ScriptResult:
+      type: object
+      properties:
+        output:
+          type: string
+
+    Player:
+      type: object
+      properties:
+        name:
+          type: string
+
+    BackupEntry:
+      type: object
+      properties:
+        name:
+          type: string
+        size:
+          type: integer
+        created:
+          type: string
+          format: date-time
+
+paths:
+  /health:
+    get:
+      summary: Health check (no auth required)
+      security: []
+      responses:
+        "200":
+          description: Server is running
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+
+  /instances:
+    get:
+      summary: List configured instance IDs
+      responses:
+        "200":
+          description: Array of instance references
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instances:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InstanceRef"
+
+  /instances/{id}/running:
+    get:
+      summary: Check whether the server process is running
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Running state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  running:
+                    type: boolean
+
+  /instances/{id}/players:
+    get:
+      summary: List currently online players
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Player list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  players:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Player"
+                  count:
+                    type: integer
+
+  /instances/{id}/logs:
+    get:
+      summary: Return the last N lines of latest.log
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: lines
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        "200":
+          description: Log lines
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lines:
+                    type: array
+                    items:
+                      type: string
+
+  /instances/{id}/logs/stream:
+    get:
+      summary: Server-Sent Events stream of new log lines
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SSE stream — each event carries `{ "line": "<log line>" }`
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /instances/{id}/command:
+    post:
+      summary: Send an RCON command to the server
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command:
+                  type: string
+                  example: "say Hello!"
+      responses:
+        "200":
+          description: RCON response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  response:
+                    type: string
+
+  /instances/{id}/action:
+    post:
+      summary: Trigger a lifecycle action (start / stop / restart / backup)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [start, stop, restart, backup]
+      responses:
+        "200":
+          $ref: "#/components/schemas/ScriptResult"
+
+  /instances/{id}/scripts/run:
+    post:
+      summary: Run a named management script with optional arguments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  description: Script key as defined in instance config
+                args:
+                  type: array
+                  items:
+                    type: string
+                    pattern: '^[\w.@-]{1,128}$'
+                  maxItems: 5
+      responses:
+        "200":
+          $ref: "#/components/schemas/ScriptResult"
+
+  /instances/{id}/stats/{uuid}:
+    get:
+      summary: Return the raw Minecraft stats JSON for a player UUID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Raw stats object
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /instances/{id}/whitelist:
+    get:
+      summary: Return the whitelist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Whitelist entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    uuid:
+                      type: string
+
+    put:
+      summary: Add a player to the whitelist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username:
+                  type: string
+
+      responses:
+        "200":
+          description: Updated whitelist
+
+  /instances/{id}/whitelist/{username}:
+    delete:
+      summary: Remove a player from the whitelist
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Removed
+
+  /instances/{id}/backups:
+    get:
+      summary: List available backup archives
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Backup list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BackupEntry"
