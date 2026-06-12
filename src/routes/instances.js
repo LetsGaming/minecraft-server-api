@@ -128,6 +128,19 @@ function createRouter(opsRegistry, logStreamAPI) {
     }
   });
 
+  // ── Capabilities (M-13) ─────────────────────────────────────────────────
+  // Reports which setup-suite artifacts (management scripts, backup layout,
+  // mod manifest, variables.txt) exist for this instance. Bots use this to
+  // gate suite-dependent features; bots talking to older wrappers without
+  // this route fall back to assuming everything is available.
+  router.get("/:id/capabilities", instanceGuard, (req, res) => {
+    try {
+      res.json(req.ops.getCapabilities());
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   // ── Stats routes ────────────────────────────────────────────────────────
 
   router.get("/:id/stats", instanceGuard, async (req, res) => {
@@ -143,6 +156,17 @@ function createRouter(opsRegistry, logStreamAPI) {
       const stats = await req.ops.getStats(req.params.uuid);
       if (stats === null) return res.status(404).json({ error: "Stats not found" });
       res.json({ stats });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // H-05 companion: explicit stats deletion for the bot's admin-gated
+  // `/server prune-stats`. UUID allowlist (F-001) + path guard in ops.
+  router.delete("/:id/stats/:uuid", instanceGuard, validateUuid, async (req, res) => {
+    try {
+      const deleted = await req.ops.deleteStats(req.params.uuid);
+      res.json({ deleted });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }

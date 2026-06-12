@@ -143,3 +143,123 @@ describe("getLevelName cache (A-03)", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });
+
+// ── Capabilities detection (M-13 companion) ───────────────────────────────
+
+describe("getCapabilities", () => {
+  const { createOperations } = require("../src/operations");
+
+  function makeCfg(overrides) {
+    return {
+      id: "test",
+      serverPath: "/nonexistent",
+      linuxUser: "mc",
+      useRcon: false,
+      rconHost: "localhost",
+      rconPort: 25575,
+      rconPassword: "",
+      backupsPath: "",
+      scriptsDir: "",
+      ...overrides,
+    };
+  }
+
+  it("reports all-false for a plain server without suite artifacts", () => {
+    const ops = createOperations(makeCfg({}));
+    assert.deepEqual(ops.getCapabilities(), {
+      scripts: { start: false, stop: false, restart: false, backup: false, status: false },
+      backups: false,
+      modManifest: false,
+      variablesFile: false,
+    });
+  });
+
+  it("reports all-true for a full suite layout (shape matches the bot's ServerCapabilities)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mc-caps-"));
+    const scriptsDir = path.join(tmp, "scripts");
+    for (const rel of [
+      "start.sh", "shutdown.sh", "smart_restart.sh",
+      "backup/backup.sh", "misc/status.sh",
+      "common/downloaded_versions.json", "common/variables.txt",
+    ]) {
+      const p = path.join(scriptsDir, rel);
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, rel.endsWith(".json") ? "{}" : "#!/bin/bash\n");
+    }
+    const backupsPath = path.join(tmp, "backups");
+    fs.mkdirSync(backupsPath, { recursive: true });
+
+    const ops = createOperations(makeCfg({ scriptsDir, backupsPath }));
+    assert.deepEqual(ops.getCapabilities(), {
+      scripts: { start: true, stop: true, restart: true, backup: true, status: true },
+      backups: true,
+      modManifest: true,
+      variablesFile: true,
+    });
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("detects partial layouts per script", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mc-caps-partial-"));
+    fs.writeFileSync(path.join(tmp, "start.sh"), "#!/bin/bash\n");
+    const ops = createOperations(makeCfg({ scriptsDir: tmp }));
+    const cap = ops.getCapabilities();
+    assert.equal(cap.scripts.start, true);
+    assert.equal(cap.scripts.stop, false);
+    assert.equal(cap.modManifest, false);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+});
+
+// ── deleteStats (H-05 prune-stats companion) ──────────────────────────────
+
+describe("deleteStats", () => {
+  const { createOperations } = require("../src/operations");
+  const UUID = "550e8400-e29b-41d4-a716-446655440000";
+
+  function makeServerDir() {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mc-del-"));
+    fs.writeFileSync(path.join(tmp, "server.properties"), "level-name=world\n");
+    const statsDir = path.join(tmp, "world", "stats");
+    fs.mkdirSync(statsDir, { recursive: true });
+    return { tmp, statsDir };
+  }
+
+  function makeOps(serverPath) {
+    return createOperations({
+      id: "test", serverPath, linuxUser: "mc", useRcon: false,
+      rconHost: "localhost", rconPort: 25575, rconPassword: "",
+      backupsPath: "", scriptsDir: "",
+    });
+  }
+
+  it("deletes an existing stats file and returns true", async () => {
+    const { tmp, statsDir } = makeServerDir();
+    const file = path.join(statsDir, `${UUID}.json`);
+    fs.writeFileSync(file, "{}");
+
+    const ops = makeOps(tmp);
+    assert.equal(await ops.deleteStats(UUID), true);
+    assert.equal(fs.existsSync(file), false);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("returns false for a missing file", async () => {
+    const { tmp } = makeServerDir();
+    const ops = makeOps(tmp);
+    assert.equal(await ops.deleteStats(UUID), false);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("blocks path traversal even if the route guard were bypassed", async () => {
+    const { tmp } = makeServerDir();
+    // Place a victim file outside the stats dir
+    const victim = path.join(tmp, "world", "victim.json");
+    fs.writeFileSync(victim, "{}");
+
+    const ops = makeOps(tmp);
+    assert.equal(await ops.deleteStats("../victim"), false);
+    assert.equal(fs.existsSync(victim), true);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+});

@@ -141,6 +141,8 @@ All prefixed with `/instances/:id` where `:id` must match `INSTANCE_NAME`.
 | `GET` | `/instances/:id/logs/stream` | Server-Sent Events stream of new log lines |
 | `GET` | `/instances/:id/stats` | Player UUIDs with stats files |
 | `GET` | `/instances/:id/stats/:uuid` | Stats JSON for a specific player |
+| `DELETE` | `/instances/:id/stats/:uuid` | Delete a player's stats file (bot `/server prune-stats`) |
+| `GET` | `/instances/:id/capabilities` | Which setup-suite artifacts exist (scripts, backups, mod manifest, variables.txt) |
 | `POST` | `/instances/:id/command` | Send a command via RCON or screen |
 | `POST` | `/instances/:id/scripts/run` | Run a management script (`start`, `stop`, `restart`, `backup`, `status`) |
 

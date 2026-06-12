@@ -1,6 +1,6 @@
 {
   "name": "mc-api-server",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Lightweight HTTP wrapper for managing a Minecraft server instance. Exposes server operations over a REST API secured with an API key.",
   "type": "commonjs",
   "main": "index.js",

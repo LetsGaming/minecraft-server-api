@@ -233,6 +233,51 @@ function createOperations(cfg) {
     }
   }
 
+  /**
+   * M-13 (bot-side capability detection): report which setup-suite
+   * artifacts exist for this instance. The response shape must stay in
+   * sync with the bot's ServerCapabilities type — bots probe
+   * GET /instances/:id/capabilities and fall back to assuming everything
+   * is available when the route is missing (older wrappers).
+   */
+  function getCapabilities() {
+    const scriptExists = (rel) =>
+      !!cfg.scriptsDir && fs.existsSync(path.join(cfg.scriptsDir, rel));
+    return {
+      scripts: {
+        start:   scriptExists(SCRIPT_MAP.start),
+        stop:    scriptExists(SCRIPT_MAP.stop),
+        restart: scriptExists(SCRIPT_MAP.restart),
+        backup:  scriptExists(SCRIPT_MAP.backup),
+        status:  scriptExists(SCRIPT_MAP.status),
+      },
+      backups:       !!cfg.backupsPath && fs.existsSync(cfg.backupsPath),
+      modManifest:   scriptExists(path.join("common", "downloaded_versions.json")),
+      variablesFile: scriptExists(path.join("common", "variables.txt")),
+    };
+  }
+
+  /**
+   * H-05 companion: delete a player's stats file. Powers the bot's
+   * explicit, admin-gated `/server prune-stats` command on remote
+   * instances. Returns true only when a file was actually removed.
+   */
+  async function deleteStats(uuid) {
+    const levelName = await getLevelName();
+    const statsDir  = path.join(cfg.serverPath, levelName, "stats");
+    // A-11: same path.relative() traversal guard as getStats — the route
+    // additionally enforces the UUID allowlist, this is defence in depth.
+    const resolved = path.resolve(statsDir, `${uuid}.json`);
+    const rel      = path.relative(statsDir, resolved);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) return false;
+    try {
+      fs.rmSync(resolved);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function getModSlugs() {
     // A-04: single try/catch — avoids TOCTOU existsSync/statSync/readFileSync
     const jsonPath = path.join(cfg.scriptsDir, "common", "downloaded_versions.json");
@@ -371,6 +416,8 @@ function createOperations(cfg) {
     getWhitelist,
     getStats,
     listStatsUuids,
+    deleteStats,
+    getCapabilities,
     getModSlugs,
     getBackups,
     runScript,

@@ -174,7 +174,7 @@ paths:
             type: string
       responses:
         "200":
-          description: SSE stream — each event carries `{ "line": "<log line>" }`
+          description: 'SSE stream — each event carries `{ "line": "<log line>" }`'
           content:
             text/event-stream:
               schema:
@@ -287,6 +287,69 @@ paths:
             application/json:
               schema:
                 type: object
+    delete:
+      summary: >-
+        Delete a player's stats file (companion to the bot's admin-gated
+        /server prune-stats)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Deletion result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    description: true only when a file was actually removed
+
+  /instances/{id}/capabilities:
+    get:
+      summary: >-
+        Report which setup-suite artifacts exist for this instance.
+        Bots use this to gate suite-dependent features; clients talking to
+        wrappers without this route should assume all capabilities are
+        available (legacy behaviour).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Capability flags (shape matches the bot's ServerCapabilities type)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scripts:
+                    type: object
+                    properties:
+                      start: { type: boolean }
+                      stop: { type: boolean }
+                      restart: { type: boolean }
+                      backup: { type: boolean }
+                      status: { type: boolean }
+                  backups:
+                    type: boolean
+                  modManifest:
+                    type: boolean
+                  variablesFile:
+                    type: boolean
 
   /instances/{id}/whitelist:
     get:
