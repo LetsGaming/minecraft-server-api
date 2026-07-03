@@ -353,6 +353,9 @@ function createOperations(cfg) {
           cwd:   cfg.scriptsDir,
           env:   { ...process.env, HOME: `/home/${cfg.linuxUser}` },
           stdio: ["ignore", "pipe", "pipe"],
+          // BUG-01: process-group leader so the A-02 group kill below
+          // (process.kill(-child.pid)) actually targets a real group.
+          detached: true,
         },
       );
 

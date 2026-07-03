@@ -11,6 +11,34 @@ const { createOperations } = require("./src/operations");
 const logStream            = require("./src/logStream");
 const { createRouter }     = require("./src/routes/instances");
 
+// ── SEC-01: fail closed on missing API key ─────────────────────────────────
+// This API can start/stop servers and dispatch arbitrary console commands, so
+// running it with no key = unauthenticated remote control. Refuse to boot
+// keyless. A keyless *local* dev mode is available only when the operator
+// explicitly opts in via MC_ALLOW_NO_AUTH=true, and even then we bind to
+// loopback so it is never network-reachable.
+const ALLOW_NO_AUTH = process.env.MC_ALLOW_NO_AUTH === "true";
+const BIND_HOST =
+  !config.API_KEY && ALLOW_NO_AUTH
+    ? "127.0.0.1"
+    : process.env.MC_BIND_HOST || "0.0.0.0";
+
+if (!config.API_KEY) {
+  if (!ALLOW_NO_AUTH) {
+    console.error(
+      "[api-server] FATAL: no API key configured.\n" +
+        "  Set apiKey in api-server-config.json, or the MC_API_KEY / API_SERVER_KEY env var.\n" +
+        "  Refusing to start an unauthenticated server-control API.\n" +
+        "  For a loopback-only keyless dev instance, set MC_ALLOW_NO_AUTH=true.",
+    );
+    process.exit(1);
+  }
+  console.warn(
+    "[api-server] WARNING: running with NO API KEY (MC_ALLOW_NO_AUTH=true).\n" +
+      "  Auth is disabled and the server is bound to 127.0.0.1 only. Do NOT use in production.",
+  );
+}
+
 // ── Express app ───────────────────────────────────────────────────────────
 
 const app = express();
@@ -63,7 +91,13 @@ app.get("/health", (_req, res) => {
 // All routes below require a valid API key.
 app.use(authFailLimiter);
 app.use((req, res, next) => {
-  if (!config.API_KEY) return next();
+  // SEC-01: only bypass auth in the explicit, loopback-bound no-auth dev mode.
+  // In every other case a key is guaranteed to exist (enforced at startup).
+  if (!config.API_KEY) {
+    if (ALLOW_NO_AUTH) return next();
+    res.status(503).json({ error: "Server misconfigured: no API key" });
+    return;
+  }
   const key = req.headers["x-api-key"] ?? "";
   // Use constant-time comparison to prevent timing-oracle key enumeration.
   // Pad/truncate to the same byte length before comparing so Buffer.from
@@ -95,8 +129,10 @@ app.use("/instances", createRouter(opsRegistry, logStreamAPI));
 // ── Start ─────────────────────────────────────────────────────────────────
 
 const instanceList = Object.keys(config.instances).join(", ");
-app.listen(config.PORT, () => {
-  console.log(`[api-server] instances: [${instanceList}] — listening on :${config.PORT}`);
+app.listen(config.PORT, BIND_HOST, () => {
+  console.log(
+    `[api-server] instances: [${instanceList}] — listening on ${BIND_HOST}:${config.PORT}`,
+  );
 });
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────
