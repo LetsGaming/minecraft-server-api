@@ -42,6 +42,9 @@ if (!config.API_KEY) {
 const { app, logStreamAPI } = await buildApp({
   config,
   allowNoAuth: ALLOW_NO_AUTH,
+  // SEC-03: only set this when the wrapper sits behind a reverse proxy
+  // that sets (not forwards) X-Forwarded-For — see README § Security.
+  trustProxy: process.env.MC_TRUST_PROXY === "true",
 });
 
 const instanceList = Object.keys(config.instances).join(", ");

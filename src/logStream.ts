@@ -17,8 +17,23 @@ import type { InstanceConfig } from "./types.js";
 // event loop. Missed content is caught up across subsequent cycles.
 const MAX_DELTA_BYTES = 1 * 1024 * 1024; // 1 MB per cycle
 
+// SEC-02: every SSE client holds a socket + FD and receives every log
+// line; without a cap, one key holder can exhaust the process. 50 per
+// instance is far above any legitimate fan-out (the bot opens one).
+// MC_SSE_MAX_CLIENTS overrides for unusual deployments (and tests).
+const DEFAULT_MAX_SSE_CLIENTS = 50;
+
+function maxSseClients(): number {
+  const raw = process.env.MC_SSE_MAX_CLIENTS;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isInteger(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_MAX_SSE_CLIENTS;
+}
+
 export interface LogStreamAPI {
-  addClient(instanceId: string, res: ServerResponse): void;
+  /** False when the instance is unknown or at its client cap (SEC-02). */
+  addClient(instanceId: string, res: ServerResponse): boolean;
   removeClient(instanceId: string, res: ServerResponse): void;
   dispose(): void;
 }
@@ -27,6 +42,7 @@ export function initLogStream(
   instances: Record<string, InstanceConfig>,
 ): LogStreamAPI {
   const clientsByInstance = new Map<string, Set<ServerResponse>>();
+  const pausedByInstance = new Map<string, Set<ServerResponse>>();
   const handles: Array<{
     watcher: fs.FSWatcher | null;
     poller: ReturnType<typeof setInterval>;
@@ -35,9 +51,12 @@ export function initLogStream(
   for (const [id, cfg] of Object.entries(instances)) {
     const logFilePath = path.join(cfg.serverPath, "logs", "latest.log");
     const clients = new Set<ServerResponse>();
+    // SEC-06: clients currently backpressured (write() returned false).
+    const paused = new Set<ServerResponse>();
     const state = { lastSize: 0, reading: false };
 
     clientsByInstance.set(id, clients);
+    pausedByInstance.set(id, paused);
 
     // Seed the read offset so we don't replay the entire log on first connect
     try {
@@ -83,10 +102,19 @@ export function initLogStream(
         for await (const line of rl) {
           const payload = `data: ${JSON.stringify({ line, serverId: instanceId })}\n\n`;
           for (const res of [...clients]) {
+            // SEC-06: a slow consumer must not backpressure the loop or
+            // buffer unboundedly. Once write() reports a full buffer we
+            // stop feeding that socket (it silently misses lines — this
+            // is a live tail, not a durable stream) until 'drain'.
+            if (paused.has(res)) continue;
             try {
-              res.write(payload);
+              if (!res.write(payload)) {
+                paused.add(res);
+                res.once("drain", () => paused.delete(res));
+              }
             } catch {
               clients.delete(res);
+              paused.delete(res);
             }
           }
         }
@@ -115,12 +143,19 @@ export function initLogStream(
     handles.push({ watcher, poller });
   }
 
-  function addClient(instanceId: string, res: ServerResponse): void {
-    clientsByInstance.get(instanceId)?.add(res);
+  function addClient(instanceId: string, res: ServerResponse): boolean {
+    const set = clientsByInstance.get(instanceId);
+    if (!set) return false;
+    // SEC-02: refuse beyond the per-instance cap — the route turns a
+    // false return into a 503 before the reply is hijacked.
+    if (set.size >= maxSseClients()) return false;
+    set.add(res);
+    return true;
   }
 
   function removeClient(instanceId: string, res: ServerResponse): void {
     clientsByInstance.get(instanceId)?.delete(res);
+    pausedByInstance.get(instanceId)?.delete(res);
   }
 
   // A-10: release all watchers and pollers on SIGTERM so a long

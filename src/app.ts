@@ -17,6 +17,14 @@ export interface BuildOptions {
   config: AppConfig;
   /** SEC-01 dev escape hatch — loopback-only, explicit opt-in. */
   allowNoAuth: boolean;
+  /**
+   * SEC-03: honor X-Forwarded-For so req.ip is the real client behind a
+   * reverse proxy. Off by default (direct bind); only enable behind a
+   * proxy that SETS the header — a spoofable forwarded header would let
+   * an attacker rotate limiter buckets at will. Wired from
+   * MC_TRUST_PROXY in index.ts.
+   */
+  trustProxy?: boolean;
 }
 
 export interface BuiltApp {
@@ -71,7 +79,12 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
     // A-07: this API only receives short commands and script action
     // names; the default 1 MB body limit is unnecessarily large.
     bodyLimit: 4096,
-    trustProxy: false,
+    // SEC-03: with trustProxy=false behind a reverse proxy, every
+    // request shares the proxy's IP — 20 failed keys from ANYONE locks
+    // out EVERYONE, and per-attacker limiting is meaningless. Both the
+    // auth-fail tracker and the global limiter key on req.ip, so this
+    // must reflect the deployment.
+    trustProxy: opts.trustProxy ?? false,
     // SSE clients hold their sockets open indefinitely; without this,
     // app.close() would wait on them forever and SIGTERM would hang
     // until systemd/PM2 escalates to SIGKILL.

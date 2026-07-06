@@ -35,9 +35,40 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
+// BUG-02: parseInt("garbage") is NaN, and `NaN ?? fallback` stays NaN —
+// only the JSON branch ever saw the 25575 default. Validate every port
+// from text sources and warn loudly instead of carrying NaN into the
+// RCON client / listen() call.
+function parsePort(raw: string, fallback: number, label: string): number {
+  const parsed = parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    log.warn(
+      "config",
+      `${label} value "${raw}" is not a valid port (1-65535) — using ${fallback}`,
+    );
+    return fallback;
+  }
+  return parsed;
+}
+
 type RawInstance = {
   [K in keyof InstanceConfig]?: InstanceConfig[K] | undefined;
 };
+
+// BUG-02 companion: hand-edited JSON configs can carry a bad rconPort
+// too (wrong type, float, out of range) — same warn-and-default as the
+// env/vars path instead of letting the value reach the RCON client.
+function normalisePort(id: string, raw: unknown): number {
+  if (raw === undefined || raw === null) return 25575;
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= 65535) {
+    return raw;
+  }
+  log.warn(
+    "config",
+    `Instance "${id}": rconPort ${JSON.stringify(raw)} is not a valid port (1-65535) — using 25575`,
+  );
+  return 25575;
+}
 
 function normaliseInstance(id: string, raw: RawInstance): InstanceConfig {
   if (!raw.serverPath) {
@@ -49,7 +80,7 @@ function normaliseInstance(id: string, raw: RawInstance): InstanceConfig {
     linuxUser: raw.linuxUser ?? "minecraft",
     useRcon: raw.useRcon === true,
     rconHost: raw.rconHost ?? "localhost",
-    rconPort: raw.rconPort ?? 25575,
+    rconPort: normalisePort(id, raw.rconPort),
     rconPassword: raw.rconPassword ?? "",
     backupsPath: raw.backupsPath ?? "",
     // scriptsDir: directory containing start.sh, shutdown.sh, etc.
@@ -111,14 +142,18 @@ function singleInstanceFromVars(vars: Record<string, string>): AppConfig {
     linuxUser: get("LINUX_USER", "USER") || undefined,
     useRcon: get("USE_RCON", "USE_RCON") === "true",
     rconHost: get("RCON_HOST", "RCON_HOST") || undefined,
-    rconPort: parseInt(get("RCON_PORT", "RCON_PORT", "25575"), 10),
+    rconPort: parsePort(get("RCON_PORT", "RCON_PORT", "25575"), 25575, "RCON_PORT"),
     rconPassword: get("RCON_PASSWORD", "RCON_PASSWORD"),
     backupsPath: get("BACKUPS_PATH", "BACKUPS_PATH"),
     ...(process.env.SCRIPTS_DIR ? { scriptsDir: process.env.SCRIPTS_DIR } : {}),
   });
 
   return {
-    PORT: parseInt(get("API_SERVER_PORT", "API_SERVER_PORT", "3000"), 10),
+    PORT: parsePort(
+      get("API_SERVER_PORT", "API_SERVER_PORT", "3000"),
+      3000,
+      "API_SERVER_PORT",
+    ),
     API_KEY: get("API_SERVER_KEY", "API_SERVER_KEY"),
     instances: { [instanceName]: inst },
   };
@@ -150,8 +185,7 @@ export function loadConfig(): AppConfig {
   // ── Environment variable overrides ─────────────────────────────────────
   if (process.env.MC_API_KEY) config.API_KEY = process.env.MC_API_KEY;
   if (process.env.MC_PORT) {
-    const p = parseInt(process.env.MC_PORT, 10);
-    if (!Number.isNaN(p)) config.PORT = p;
+    config.PORT = parsePort(process.env.MC_PORT, config.PORT, "MC_PORT");
   }
   // Per-instance RCON password override: RCON_PASSWORD_<INSTANCE_ID_UPPER>
   for (const [id, inst] of Object.entries(config.instances)) {

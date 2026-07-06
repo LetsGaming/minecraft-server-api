@@ -279,14 +279,17 @@ describe("POST validation", () => {
     expect((res.json() as { error: string }).error).toContain("Invalid args");
   });
 
-  it("500s an unknown script action", async () => {
+  it("400s an unknown script action with a safe, helpful body (SEC-05)", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/instances/survival/scripts/run",
       headers: auth,
       payload: { action: "format-disk" },
     });
-    expect(res.statusCode).toBe(500);
+    // Client input error, not an internal failure: SEC-05 made genuine
+    // 500 bodies generic, so this validation happens up front instead of
+    // via runScript's throw.
+    expect(res.statusCode).toBe(400);
     expect((res.json() as { error: string }).error).toContain("Unknown script action");
   });
 

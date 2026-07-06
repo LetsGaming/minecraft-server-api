@@ -4,6 +4,41 @@ All notable changes to mc-api-server are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 semver.
 
+## [Unreleased]
+
+### Security
+
+- **SSE log streams are capped per instance** (audit SEC-02): more than
+  50 concurrent `/logs/stream` clients (configurable via
+  `MC_SSE_MAX_CLIENTS`) now receive `503` instead of exhausting sockets
+  and file descriptors. The cap is checked before the reply is hijacked.
+- **Slow SSE consumers no longer stall the fan-out** (audit SEC-06):
+  when `write()` reports a full socket buffer the client is skipped
+  until `'drain'` instead of buffering unboundedly — one stuck consumer
+  can no longer degrade delivery for everyone.
+- **Proxy-aware rate limiting** (audit SEC-03): `MC_TRUST_PROXY=true`
+  makes Fastify honor `X-Forwarded-For`, so the auth-failure lockout and
+  global limiter key on the real client behind a reverse proxy. Without
+  it, all proxied callers shared the proxy's IP — one attacker's 20
+  failed keys locked out every client. Only enable behind a proxy that
+  *sets* the header; default stays `false` for direct binds. Documented
+  in `.env.example` and README § Security.
+- **`500` bodies are a fixed string** (audit SEC-05): all 16 route catch
+  blocks returned `String(err)` — absolute paths, sudo/stderr fragments
+  included. Detail now goes to the wrapper log; clients get
+  `{ "error": "Internal server error" }`. Unknown script actions are
+  validated up front and return a helpful `400` instead of tripping the
+  generic path.
+
+### Fixed
+
+- **Unparseable ports fall back with a warning** (audit BUG-02):
+  `RCON_PORT=garbage` in the vars/env fallback produced `NaN` (nullish
+  coalescing does not catch `NaN`); `API_SERVER_PORT`/`MC_PORT` had the
+  same hole, and hand-edited JSON `rconPort` values were unvalidated.
+  All port sources now validate to 1–65535 and warn-and-default
+  otherwise.
+
 ## [3.0.0] — 2026-07-06
 
 TypeScript rework + the two endpoints minecraft-bot has been waiting

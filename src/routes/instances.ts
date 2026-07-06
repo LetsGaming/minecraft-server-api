@@ -7,8 +7,23 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Operations } from "../operations.js";
 import type { InstanceConfig } from "../types.js";
 import type { LogStreamAPI } from "../logStream.js";
+import { SCRIPT_MAP } from "../operations.js";
 import { getHostInfo } from "../hostInfo.js";
 import { WRAPPER_VERSION } from "../version.js";
+import { log } from "../logger.js";
+
+// SEC-05: 500 bodies used to carry String(err) — absolute paths, sudo
+// and stderr fragments included. Detail goes to the wrapper log; the
+// client gets a fixed body (the historical `{ error }` shape is kept).
+function internalError(
+  reply: FastifyReply,
+  context: string,
+  err: unknown,
+): FastifyReply {
+  const msg = err instanceof Error ? err.message : String(err);
+  log.error("routes", `${context}: ${msg}`);
+  return reply.status(500).send({ error: "Internal server error" });
+}
 
 // F-001: strict UUID allowlist
 export const UUID_RE =
@@ -76,7 +91,7 @@ export function registerInstanceRoutes(
     try {
       return { version: WRAPPER_VERSION, host: await getHostInfo(entry.cfg) };
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `info ${req.params.id}`, err);
     }
   });
 
@@ -91,7 +106,7 @@ export function registerInstanceRoutes(
       try {
         return { output: await entry.tailLog(lines) };
       } catch (err) {
-        return reply.status(500).send({ error: String(err) });
+        return internalError(reply, `logs/tail ${req.params.id}`, err);
       }
     },
   );
@@ -99,6 +114,16 @@ export function registerInstanceRoutes(
   app.get<{ Params: InstanceParams }>(`${P}/logs/stream`, (req, reply) => {
     const entry = resolve(req, reply);
     if (!entry) return;
+
+    // SEC-02: register (and cap-check) BEFORE hijacking so the over-cap
+    // case is still a normal Fastify reply. Nothing is written to the
+    // stored response until the next log line, and hijack + writeHead
+    // happen synchronously below — no fan-out can interleave.
+    if (!logStreamAPI.addClient(req.params.id, reply.raw)) {
+      return reply
+        .status(503)
+        .send({ error: "Too many log stream clients for this instance" });
+    }
 
     // SSE: take over the raw socket; Fastify must not touch the reply after this.
     reply.hijack();
@@ -119,7 +144,6 @@ export function registerInstanceRoutes(
       }
     }, 20_000);
 
-    logStreamAPI.addClient(req.params.id, res);
     req.raw.on("close", () => {
       clearInterval(hb);
       logStreamAPI.removeClient(req.params.id, res);
@@ -134,7 +158,7 @@ export function registerInstanceRoutes(
     try {
       return { whitelist: entry.getWhitelist() };
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `whitelist ${req.params.id}`, err);
     }
   });
 
@@ -147,7 +171,7 @@ export function registerInstanceRoutes(
     try {
       return { usercache: entry.getUserCache() };
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `usercache ${req.params.id}`, err);
     }
   });
 
@@ -157,7 +181,7 @@ export function registerInstanceRoutes(
     try {
       return { levelName: await entry.getLevelName() };
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `level-name ${req.params.id}`, err);
     }
   });
 
@@ -172,7 +196,7 @@ export function registerInstanceRoutes(
       }
       return result;
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `mods ${req.params.id}`, err);
     }
   });
 
@@ -182,7 +206,7 @@ export function registerInstanceRoutes(
     try {
       return entry.getBackups();
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `backups ${req.params.id}`, err);
     }
   });
 
@@ -193,7 +217,7 @@ export function registerInstanceRoutes(
     try {
       return entry.getCapabilities();
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `capabilities ${req.params.id}`, err);
     }
   });
 
@@ -205,7 +229,7 @@ export function registerInstanceRoutes(
     try {
       return { uuids: await entry.listStatsUuids() };
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `stats ${req.params.id}`, err);
     }
   });
 
@@ -224,7 +248,7 @@ export function registerInstanceRoutes(
         }
         return { stats };
       } catch (err) {
-        return reply.status(500).send({ error: String(err) });
+        return internalError(reply, `stats/:uuid get ${req.params.id}`, err);
       }
     },
   );
@@ -242,7 +266,7 @@ export function registerInstanceRoutes(
       try {
         return { deleted: await entry.deleteStats(req.params.uuid) };
       } catch (err) {
-        return reply.status(500).send({ error: String(err) });
+        return internalError(reply, `stats/:uuid delete ${req.params.id}`, err);
       }
     },
   );
@@ -255,7 +279,7 @@ export function registerInstanceRoutes(
     try {
       return { running: await entry.isRunning() };
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `running ${req.params.id}`, err);
     }
   });
 
@@ -265,7 +289,7 @@ export function registerInstanceRoutes(
     try {
       return await entry.getList();
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `list ${req.params.id}`, err);
     }
   });
 
@@ -275,7 +299,7 @@ export function registerInstanceRoutes(
     try {
       return { tps: await entry.getTps() };
     } catch (err) {
-      return reply.status(500).send({ error: String(err) });
+      return internalError(reply, `tps ${req.params.id}`, err);
     }
   });
 
@@ -297,7 +321,7 @@ export function registerInstanceRoutes(
       try {
         return { result: await entry.sendCommand(command) };
       } catch (err) {
-        return reply.status(500).send({ error: String(err) });
+        return internalError(reply, `command ${req.params.id}`, err);
       }
     },
   );
@@ -312,6 +336,16 @@ export function registerInstanceRoutes(
       if (!action || typeof action !== "string") {
         return reply.status(400).send({ error: "Missing action" });
       }
+      // SEC-05 companion: an unknown action is CLIENT input error, not an
+      // internal failure — reject it here with a helpful 400 (echoing the
+      // client's own input is safe) instead of letting runScript throw
+      // into the generic-500 path and losing the feedback the bot
+      // surfaces to admins.
+      if (!(action in SCRIPT_MAP)) {
+        return reply
+          .status(400)
+          .send({ error: `Unknown script action: ${action.slice(0, 64)}` });
+      }
       // F-001: validate args before passing to spawn()
       if (!validateArgs(args)) {
         return reply.status(400).send({
@@ -323,7 +357,7 @@ export function registerInstanceRoutes(
       try {
         return await entry.runScript(action, args);
       } catch (err) {
-        return reply.status(500).send({ error: String(err) });
+        return internalError(reply, `scripts/run ${req.params.id}`, err);
       }
     },
   );
