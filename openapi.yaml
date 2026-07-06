@@ -1,15 +1,19 @@
-openapi: "3.1.0"
-
+openapi: "3.0.3"
 info:
-  title: minecraft-api-server
-  version: "2.0.0"
+  title: mc-api-server
+  version: "3.0.0"
   description: |
-    REST API for managing Minecraft server instances.
-    All endpoints (except /health) require the `x-api-key` header.
+    Lightweight HTTP wrapper for managing Minecraft server instances —
+    the remote backend for minecraft-bot.
+
+    All routes except `GET /health` require the `x-api-key` header.
+    Error bodies are always `{ "error": "<message>" }`.
+
+    Rate limits: 300 requests / 15 min / IP globally (`/health` exempt),
+    plus 20 failed authentications / 15 min / IP.
 
 servers:
-  - url: "http://localhost:3000"
-    description: Local default
+  - url: http://localhost:3000
 
 security:
   - ApiKeyAuth: []
@@ -22,173 +26,493 @@ components:
       name: x-api-key
 
   schemas:
-    InstanceRef:
-      type: object
-      properties:
-        id:
-          type: string
-          example: survival
-
     Error:
       type: object
+      required: [error]
       properties:
         error:
           type: string
 
-    ScriptResult:
+    ProcessUsage:
       type: object
+      required: [pid, cpuPercent, rssBytes]
       properties:
-        output:
-          type: string
+        pid: { type: integer }
+        cpuPercent: { type: number }
+        rssBytes: { type: integer, description: Resident set size in bytes }
 
-    Player:
+    DiskUsage:
       type: object
+      required: [path, usedPercent, availableBytes, totalBytes]
       properties:
-        name:
-          type: string
+        path: { type: string }
+        usedPercent: { type: number }
+        availableBytes: { type: integer }
+        totalBytes: { type: integer }
 
-    BackupEntry:
+    HostInfo:
       type: object
+      required: [process, disks]
       properties:
-        name:
-          type: string
-        size:
-          type: integer
-        created:
-          type: string
-          format: date-time
+        process:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/ProcessUsage" }]
+          description: >
+            The biggest java process owned by the instance's linuxUser;
+            null when the server is not running.
+        disks:
+          type: array
+          items: { $ref: "#/components/schemas/DiskUsage" }
+          description: df results for the server directory and the backups directory.
+
+    WhitelistEntry:
+      type: object
+      required: [name, uuid]
+      properties:
+        name: { type: string }
+        uuid: { type: string }
+
+    BackupDirInfo:
+      type: object
+      required: [dir, count, latestFile, latestMtimeMs, latestSizeBytes]
+      properties:
+        dir: { type: string, example: archives/daily }
+        count: { type: integer }
+        latestFile: { type: string }
+        latestMtimeMs: { type: number }
+        latestSizeBytes: { type: integer }
+
+    Capabilities:
+      type: object
+      required: [scripts, backups, modManifest, variablesFile]
+      properties:
+        scripts:
+          type: object
+          required: [start, stop, restart, backup, status]
+          properties:
+            start: { type: boolean }
+            stop: { type: boolean }
+            restart: { type: boolean }
+            backup: { type: boolean }
+            status: { type: boolean }
+        backups: { type: boolean }
+        modManifest: { type: boolean }
+        variablesFile: { type: boolean }
+
+    TpsPaper:
+      type: object
+      required: [type, tps1m, tps5m, tps15m, raw]
+      properties:
+        type: { type: string, enum: [paper] }
+        tps1m: { type: number }
+        tps5m: { type: number }
+        tps15m: { type: number }
+        raw: { type: string }
+
+    TpsVanilla:
+      type: object
+      required: [type, tps1m, mspt, raw]
+      properties:
+        type: { type: string, enum: [vanilla] }
+        tps1m: { type: number }
+        mspt: { type: number }
+        raw: { type: string }
+        p50: { type: number }
+        p95: { type: number }
+        p99: { type: number }
+
+  parameters:
+    InstanceId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Instance id as configured in api-server-config.json.
+    StatsUuid:
+      name: uuid
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+      description: Dashed player UUID (strict allowlist, F-001).
+
+  responses:
+    Unauthorized:
+      description: Missing or wrong API key.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InstanceNotFound:
+      description: No instance with this id is configured.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
 
 paths:
   /health:
     get:
-      summary: Health check (no auth required)
+      summary: Liveness probe (public)
       security: []
       responses:
         "200":
-          description: Server is running
+          description: The wrapper is up.
           content:
             application/json:
               schema:
                 type: object
+                required: [ok, version]
                 properties:
-                  ok:
-                    type: boolean
+                  ok: { type: boolean }
+                  version: { type: string, example: "3.0.0" }
 
   /instances:
     get:
-      summary: List configured instance IDs
+      summary: List configured instance ids
       responses:
         "200":
-          description: Array of instance references
+          description: Configured instances.
           content:
             application/json:
               schema:
                 type: object
+                required: [instances]
                 properties:
                   instances:
                     type: array
                     items:
-                      $ref: "#/components/schemas/InstanceRef"
+                      type: object
+                      required: [id]
+                      properties:
+                        id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /instances/{id}/info:
+    get:
+      summary: Version handshake + host metrics
+      description: >
+        The wrapper half of the bot's "remote host metrics + version
+        handshake" feature. `version` is compared against the bot's
+        MIN_WRAPPER_VERSION at startup; `host` feeds the status view and
+        the disk-space alerts for remote instances.
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: Wrapper version and host metrics.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, host]
+                properties:
+                  version: { type: string, example: "3.0.0" }
+                  host: { $ref: "#/components/schemas/HostInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
 
   /instances/{id}/running:
     get:
-      summary: Check whether the server process is running
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      summary: Is the server process alive?
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
       responses:
         "200":
-          description: Running state
+          description: Liveness (RCON probe or screen session presence).
           content:
             application/json:
               schema:
                 type: object
+                required: [running]
                 properties:
-                  running:
-                    type: boolean
+                  running: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
 
-  /instances/{id}/players:
+  /instances/{id}/list:
     get:
-      summary: List currently online players
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      summary: Online player count and names
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
       responses:
         "200":
-          description: Player list
+          description: >
+            Parsed `/list` output. playerCount/maxPlayers are strings
+            (historical wire contract; maxPlayers is "?" when unknown).
+            Without RCON this returns zeros.
           content:
             application/json:
               schema:
                 type: object
+                required: [playerCount, maxPlayers, players]
                 properties:
+                  playerCount: { type: string, example: "3" }
+                  maxPlayers: { type: string, example: "20" }
                   players:
                     type: array
-                    items:
-                      $ref: "#/components/schemas/Player"
-                  count:
-                    type: integer
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
 
-  /instances/{id}/logs:
+  /instances/{id}/tps:
     get:
-      summary: Return the last N lines of latest.log
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: lines
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 500
-            default: 50
+      summary: TPS data (requires RCON)
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
       responses:
         "200":
-          description: Log lines
+          description: Paper `/tps` or vanilla `/tick query`; null when unavailable.
           content:
             application/json:
               schema:
                 type: object
+                required: [tps]
                 properties:
-                  lines:
+                  tps:
+                    nullable: true
+                    oneOf:
+                      - $ref: "#/components/schemas/TpsPaper"
+                      - $ref: "#/components/schemas/TpsVanilla"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/level-name:
+    get:
+      summary: World name from server.properties
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: level-name (cached 60 s), "world" as fallback.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [levelName]
+                properties:
+                  levelName: { type: string, example: world }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/whitelist:
+    get:
+      summary: whitelist.json contents
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: Whitelist entries ([] on any read error).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [whitelist]
+                properties:
+                  whitelist:
                     type: array
-                    items:
-                      type: string
+                    items: { $ref: "#/components/schemas/WhitelistEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/usercache:
+    get:
+      summary: usercache.json contents
+      description: >
+        Every player the server has ever seen, whitelist or not. The bot
+        layers this over the whitelist as a best-effort name source.
+        Entries are filtered to {name, uuid}; Mojang's extra fields are
+        dropped. [] on any read error.
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: Filtered usercache entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [usercache]
+                properties:
+                  usercache:
+                    type: array
+                    items: { $ref: "#/components/schemas/WhitelistEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/mods:
+    get:
+      summary: Mod slugs from the suite's downloaded_versions.json
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: Slugs plus the manifest's mtime (bot-side cache key).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slugs, mtimeMs]
+                properties:
+                  slugs:
+                    type: array
+                    items: { type: string }
+                  mtimeMs: { type: number }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Instance unknown, or no mod manifest exists (F-008).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /instances/{id}/backups:
+    get:
+      summary: Backup tier metadata
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: >
+            Per-tier (hourly, archives/daily|weekly|monthly|update)
+            counts and latest archive metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [dirs, totalBytes]
+                properties:
+                  dirs:
+                    type: array
+                    items: { $ref: "#/components/schemas/BackupDirInfo" }
+                  totalBytes: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/capabilities:
+    get:
+      summary: Which setup-suite artifacts exist (M-13)
+      description: >
+        Bots probe this to gate suite-dependent features; the shape must
+        stay in sync with the bot's ServerCapabilities type.
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: Capability flags.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Capabilities" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/logs/tail:
+    get:
+      summary: Last N lines of latest.log
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - name: lines
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 10 }
+          description: Clamped to [1, 500]; non-numeric input falls back to 10 (F-009).
+      responses:
+        "200":
+          description: Raw tail output ("" when the log is unreadable).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [output]
+                properties:
+                  output: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
 
   /instances/{id}/logs/stream:
     get:
       summary: Server-Sent Events stream of new log lines
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      description: |
+        `text/event-stream`. Emits `:connected` on attach, comment
+        heartbeats every 20 s, and one event per appended log line:
+
+            data: {"line": "<log line>", "serverId": "<instance id>"}
+
+        This is the contract the bot's RemoteLogWatcher consumes.
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
       responses:
         "200":
-          description: 'SSE stream — each event carries `{ "line": "<log line>" }`'
+          description: Open SSE stream.
           content:
             text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/stats:
+    get:
+      summary: Player UUIDs with stats files
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: UUIDs (filenames without .json) in <world>/stats.
+          content:
+            application/json:
               schema:
-                type: string
+                type: object
+                required: [uuids]
+                properties:
+                  uuids:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/stats/{uuid}:
+    get:
+      summary: Stats JSON for one player
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/StatsUuid"
+      responses:
+        "200":
+          description: The raw vanilla stats file.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stats]
+                properties:
+                  stats: { type: object }
+        "400":
+          description: UUID failed the allowlist (F-001).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Instance unknown, or no stats file for this UUID.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      summary: Delete a player's stats file
+      description: >
+        Powers the bot's admin-gated `/server prune-stats` on remote
+        instances (H-05). UUID allowlist plus a path.relative traversal
+        guard in the operations layer (A-11).
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/StatsUuid"
+      responses:
+        "200":
+          description: Whether a file was actually removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted: { type: boolean }
+        "400":
+          description: UUID failed the allowlist (F-001).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
 
   /instances/{id}/command:
     post:
-      summary: Send an RCON command to the server
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      summary: Send a console command (RCON, screen fallback)
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
       requestBody:
         required: true
         content:
@@ -199,51 +523,41 @@ paths:
               properties:
                 command:
                   type: string
-                  example: "say Hello!"
+                  maxLength: 256
+                  example: whitelist add Steve
       responses:
         "200":
-          description: RCON response
+          description: >
+            RCON response body, or null when the command went through the
+            screen fallback (fire-and-forget) — control characters are
+            stripped before screen dispatch (A-01).
           content:
             application/json:
               schema:
                 type: object
+                required: [result]
                 properties:
-                  response:
+                  result:
                     type: string
-
-  /instances/{id}/action:
-    post:
-      summary: Trigger a lifecycle action (start / stop / restart / backup)
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [action]
-              properties:
-                action:
-                  type: string
-                  enum: [start, stop, restart, backup]
-      responses:
-        "200":
-          $ref: "#/components/schemas/ScriptResult"
+                    nullable: true
+        "400":
+          description: Missing/non-string command, or > 256 characters (A-08).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
 
   /instances/{id}/scripts/run:
     post:
-      summary: Run a named management script with optional arguments
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      summary: Run a management script
+      description: >
+        Actions map to the setup suite's scripts (start → start.sh,
+        stop → shutdown.sh, restart → smart_restart.sh,
+        backup → backup/backup.sh, status → misc/status.sh), executed as
+        the instance's linuxUser via passwordless sudo. Args are
+        allowlisted (F-001): ≤ 5 strings of [\w.@-]{1,128} — no slashes.
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
       requestBody:
         required: true
         content:
@@ -254,183 +568,32 @@ paths:
               properties:
                 action:
                   type: string
-                  description: Script key as defined in instance config
+                  enum: [start, stop, restart, backup, status]
                 args:
                   type: array
-                  items:
-                    type: string
-                    pattern: '^[\w.@-]{1,128}$'
                   maxItems: 5
+                  items: { type: string, pattern: "^[\\w.@-]{1,128}$" }
       responses:
         "200":
-          $ref: "#/components/schemas/ScriptResult"
-
-  /instances/{id}/stats/{uuid}:
-    get:
-      summary: Return the raw Minecraft stats JSON for a player UUID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: uuid
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "200":
-          description: Raw stats object
+          description: Script output after completion.
           content:
             application/json:
               schema:
                 type: object
-    delete:
-      summary: >-
-        Delete a player's stats file (companion to the bot's admin-gated
-        /server prune-stats)
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: uuid
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "200":
-          description: Deletion result
-          content:
-            application/json:
-              schema:
-                type: object
+                required: [output, stderr, exitCode]
                 properties:
-                  deleted:
-                    type: boolean
-                    description: true only when a file was actually removed
-
-  /instances/{id}/capabilities:
-    get:
-      summary: >-
-        Report which setup-suite artifacts exist for this instance.
-        Bots use this to gate suite-dependent features; clients talking to
-        wrappers without this route should assume all capabilities are
-        available (legacy behaviour).
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Capability flags (shape matches the bot's ServerCapabilities type)
+                  output: { type: string }
+                  stderr: { type: string }
+                  exitCode: { type: integer, nullable: true }
+        "400":
+          description: Missing action or args failed the allowlist.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  scripts:
-                    type: object
-                    properties:
-                      start: { type: boolean }
-                      stop: { type: boolean }
-                      restart: { type: boolean }
-                      backup: { type: boolean }
-                      status: { type: boolean }
-                  backups:
-                    type: boolean
-                  modManifest:
-                    type: boolean
-                  variablesFile:
-                    type: boolean
-
-  /instances/{id}/whitelist:
-    get:
-      summary: Return the whitelist
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Whitelist entries
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+        "500":
+          description: Unknown action, script missing, sudo misconfigured, or timeout.
           content:
             application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    name:
-                      type: string
-                    uuid:
-                      type: string
-
-    put:
-      summary: Add a player to the whitelist
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [username]
-              properties:
-                username:
-                  type: string
-
-      responses:
-        "200":
-          description: Updated whitelist
-
-  /instances/{id}/whitelist/{username}:
-    delete:
-      summary: Remove a player from the whitelist
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: username
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Removed
-
-  /instances/{id}/backups:
-    get:
-      summary: List available backup archives
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Backup list
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/BackupEntry"
+              schema: { $ref: "#/components/schemas/Error" }

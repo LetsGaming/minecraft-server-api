@@ -2,6 +2,8 @@
  * PM2 Ecosystem Configuration — mc-api-server
  *
  * One process serves all configured instances from a single api-server-config.json.
+ * Requires a build first (`npm ci && npm run build`) — the "index.js"
+ * script below is a shim into dist/.
  *
  * Usage (from the api-server directory):
  *   pm2 start ecosystem.config.cjs

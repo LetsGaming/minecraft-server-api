@@ -1,10 +1,13 @@
-"use strict";
-
-const net = require("net");
+/**
+ * Minimal RCON client — one instance per configured Minecraft server.
+ * Reconnects lazily on send(); concurrent callers during a connect are
+ * queued (F-004) instead of poll-looping.
+ */
+import net from "net";
 
 // ── Packet encoding/decoding ──────────────────────────────────────────────
 
-function encodePkt(id, type, body) {
+export function encodePkt(id: number, type: number, body: string): Buffer {
   const b = Buffer.from(body, "utf-8");
   const len = 4 + 4 + b.length + 2;
   const buf = Buffer.alloc(4 + len);
@@ -17,7 +20,14 @@ function encodePkt(id, type, body) {
   return buf;
 }
 
-function decodePkt(buf) {
+export interface RconPacket {
+  id: number;
+  type: number;
+  body: string;
+  totalSize: number;
+}
+
+export function decodePkt(buf: Buffer): RconPacket | null {
   if (buf.length < 14) return null;
   const length = buf.readInt32LE(0);
   // A-09: reject negative lengths and absurdly large values. A valid RCON
@@ -37,25 +47,42 @@ function decodePkt(buf) {
 
 // ── RconClient ────────────────────────────────────────────────────────────
 
-class RconClient {
-  constructor(host, port, password) {
+interface Pending {
+  resolve: (body: string) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+interface Waiter {
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+
+export class RconClient {
+  readonly host: string;
+  readonly port: number;
+  private readonly password: string;
+
+  private _socket: net.Socket | null = null;
+  private _auth = false;
+  private _connecting = false;
+  private _cmdId = 10;
+  private readonly _pending = new Map<number, Pending>();
+  private _buf = Buffer.alloc(0);
+  private _authResolve: (() => void) | null = null;
+  private _authReject: ((err: Error) => void) | null = null;
+  // F-004: waiter queue replaces the 50ms poll-loop for concurrent callers
+  private _waiters: Waiter[] = [];
+  /** Timestamp of the last successful command round-trip (isRunning fast path). */
+  lastSuccessTime = 0;
+
+  constructor(host: string, port: number, password: string) {
     this.host = host;
     this.port = port;
     this.password = password;
-    this._socket = null;
-    this._auth = false;
-    this._connecting = false;
-    this._cmdId = 10;
-    this._pending = new Map();
-    this._buf = Buffer.alloc(0);
-    this._authResolve = null;
-    this._authReject = null;
-    // F-004: waiter queue replaces the 50ms poll-loop for concurrent callers
-    this._waiters = [];
-    this.lastSuccessTime = 0;
   }
 
-  _cleanup() {
+  private _cleanup(): void {
     this._auth = false;
     this._connecting = false;
     if (this._socket) {
@@ -79,10 +106,12 @@ class RconClient {
     this._waiters = [];
   }
 
-  connect() {
+  connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      if (this._auth && this._socket && !this._socket.destroyed)
-        return resolve();
+      if (this._auth && this._socket && !this._socket.destroyed) {
+        resolve();
+        return;
+      }
 
       // F-004: instead of a 50ms poll-loop, queue the caller and resolve/
       // reject it alongside the primary auth promise. No setTimeout leak.
@@ -95,19 +124,20 @@ class RconClient {
       this._connecting = true;
       this._authResolve = resolve;
       this._authReject = reject;
-      this._socket = new net.Socket();
-      this._socket.setKeepAlive(true, 30000);
+      const socket = new net.Socket();
+      this._socket = socket;
+      socket.setKeepAlive(true, 30_000);
 
       const authTimeout = setTimeout(() => {
         this._cleanup();
         reject(new Error("RCON auth timeout"));
-      }, 10000);
+      }, 10_000);
 
-      this._socket.connect(this.port, this.host, () => {
-        this._socket.write(encodePkt(1, 3, this.password));
+      socket.connect(this.port, this.host, () => {
+        socket.write(encodePkt(1, 3, this.password));
       });
 
-      this._socket.on("data", (data) => {
+      socket.on("data", (data) => {
         this._buf = Buffer.concat([this._buf, data]);
         for (;;) {
           const pkt = decodePkt(this._buf);
@@ -129,7 +159,7 @@ class RconClient {
             if (pkt.id === 1) {
               this._auth = true;
               this._connecting = false;
-              this._authResolve();
+              this._authResolve?.();
               this._authResolve = null;
               this._authReject = null;
               // F-004: wake all concurrent callers
@@ -149,12 +179,12 @@ class RconClient {
         }
       });
 
-      this._socket.on("error", () => this._cleanup());
-      this._socket.on("close", () => this._cleanup());
+      socket.on("error", () => this._cleanup());
+      socket.on("close", () => this._cleanup());
     });
   }
 
-  async send(command, timeoutMs = 5000) {
+  async send(command: string, timeoutMs = 5_000): Promise<string> {
     await this.connect();
     const id = this._cmdId++;
     if (this._cmdId > 2e9) this._cmdId = 10;
@@ -164,9 +194,7 @@ class RconClient {
         reject(new Error("RCON timeout"));
       }, timeoutMs);
       this._pending.set(id, { resolve, reject, timer });
-      this._socket.write(encodePkt(id, 2, command));
+      this._socket?.write(encodePkt(id, 2, command));
     });
   }
 }
-
-module.exports = { RconClient, encodePkt, decodePkt };
