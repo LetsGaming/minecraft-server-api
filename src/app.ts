@@ -11,6 +11,7 @@ import { createOperations, type Operations } from "./operations.js";
 import { initLogStream, type LogStreamAPI } from "./logStream.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { WRAPPER_VERSION } from "./version.js";
+import { buildManifest } from "./manifest.js";
 import type { AppConfig, InstanceConfig } from "./types.js";
 
 export interface BuildOptions {
@@ -91,6 +92,21 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
     forceCloseConnections: true,
   });
 
+  // ── Route census ────────────────────────────────────────────────────
+  // Collected from Fastify's own router so /manifest reports what this
+  // process actually serves. Must be added before any route is
+  // registered — onRoute only fires for registrations that follow it.
+  const routes: string[] = [];
+  app.addHook("onRoute", (route) => {
+    const methods = Array.isArray(route.method) ? route.method : [route.method];
+    for (const method of methods) {
+      // HEAD is auto-generated alongside every GET; it is not a
+      // separate capability and would only add noise for the bot.
+      if (method === "HEAD") continue;
+      routes.push(`${method} ${route.url}`);
+    }
+  });
+
   // ── Security headers ────────────────────────────────────────────────
   app.addHook("onSend", async (_req, reply) => {
     void reply.header("X-Content-Type-Options", "nosniff");
@@ -148,6 +164,10 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
   const logStreamAPI = initLogStream(config.instances);
 
   registerInstanceRoutes(app, opsRegistry, logStreamAPI);
+
+  // ── Manifest (authenticated: a route census is reconnaissance) ───────
+  // Registered last so the census above has seen every other route.
+  app.get("/manifest", async () => buildManifest(routes));
 
   // Historical `{ error }` body shape on unknown routes.
   app.setNotFoundHandler((_req, reply) => {

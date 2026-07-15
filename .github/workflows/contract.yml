@@ -1,0 +1,76 @@
+# Cross-repo contract: this wrapper against the real minecraft-bot.
+#
+# The mirror of the bot's own contract job, run from this side so a change
+# here that breaks the bot fails in the PR that causes it — which is the only
+# place it is cheap to fix. The check itself lives in the bot repo
+# (scripts/e2e-wrapper-contract.mjs): it asserts the bot's expectations, so it
+# belongs with the bot, and this job simply points it at this checkout.
+#
+# It runs the bot's real serverAccess against a real instance of this wrapper,
+# because the bot casts our JSON to its own types — a field renamed here
+# type-checks on both sides and only surfaces as a remote instance quietly
+# returning undefined. `npm test` here cannot see that; this can.
+name: bot contract
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "openapi.yaml"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/contract.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "openapi.yaml"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/contract.yml"
+  workflow_dispatch:
+    inputs:
+      bot_ref:
+        description: "minecraft-bot ref to test against"
+        required: false
+        default: main
+
+env:
+  BOT_REPO: LetsGaming/minecraft-bot
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the wrapper
+        uses: actions/checkout@v4
+        with:
+          path: api-wrapper
+
+      - name: Check out the bot
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.BOT_REPO }}
+          ref: ${{ inputs.bot_ref || 'main' }}
+          path: bot
+
+      - uses: actions/setup-node@v4
+        with:
+          # The check imports the bot's built core, whose engines require
+          # >= 22.13 for node:sqlite.
+          node-version: 24
+
+      - name: Build the wrapper
+        working-directory: api-wrapper
+        run: npm ci && npm run build
+
+      - name: Build the bot
+        working-directory: bot
+        run: npm ci && npm run build
+
+      - name: Contract check
+        working-directory: bot
+        env:
+          WRAPPER_DIR: ${{ github.workspace }}/api-wrapper
+          E2E_DUMP_WRAPPER_LOG: "1"
+        run: npm run e2e:contract

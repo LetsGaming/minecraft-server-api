@@ -166,6 +166,54 @@ paths:
                   ok: { type: boolean }
                   version: { type: string, example: "3.0.0" }
 
+  /manifest:
+    get:
+      summary: What this wrapper can do, generated from its router
+      description: >
+        The bot reads this at startup to report exactly which features it
+        is missing (and which this wrapper offers that the bot is too old
+        to use), instead of inferring it from a single semver compare.
+
+        `routes` is collected from Fastify's router at boot, so it cannot
+        disagree with what the process serves; `scriptActions` comes from
+        the same map the script runner validates against. Every instance
+        route belongs to exactly one `features` entry, and CI asserts both
+        directions plus this document against the router — which is why
+        this endpoint is generated rather than being a copy of this file.
+
+        Authenticated: a route census is reconnaissance. Bots that get a
+        404 here fall back to the `/instances/:id/info` version compare.
+      responses:
+        "200":
+          description: The wrapper's feature manifest.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [wrapper, manifest, routes, features, scriptActions]
+                properties:
+                  wrapper: { type: string, example: "3.0.0" }
+                  manifest:
+                    type: integer
+                    example: 1
+                    description: Envelope version; bumped only if this shape changes.
+                  routes:
+                    type: array
+                    items: { type: string, example: "GET /instances/:id/info" }
+                  features:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      required: [version, summary]
+                      properties:
+                        version: { type: integer, example: 1 }
+                        summary: { type: string }
+                  scriptActions:
+                    type: array
+                    items: { type: string }
+                    example: [start, stop, restart, backup, status]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /instances:
     get:
       summary: List configured instance ids

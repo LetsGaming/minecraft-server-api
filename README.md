@@ -42,7 +42,7 @@ pm2 startup   # run the printed command as root to enable autostart
 
 ### Via minecraft-server-setup
 
-When setting up a server with [minecraft-server-setup](https://github.com/your-org/minecraft-server-setup), enable the API server in `variables.json`:
+When setting up a server with [minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup), enable the API server in `variables.json`:
 
 ```json
 "API_SERVER": {
@@ -142,6 +142,7 @@ All routes except `GET /health` require the `x-api-key` header. Error bodies are
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Liveness + wrapper version (public) |
+| `GET` | `/manifest` | **What this wrapper can do** — routes, features, script actions; generated from the router |
 | `GET` | `/instances` | Configured instance ids |
 | `GET` | `/instances/:id/info` | **Wrapper version + host metrics** (server process RAM/CPU, disk usage) — the bot's startup handshake |
 | `GET` | `/instances/:id/running` | Is the server process alive? |

@@ -4,7 +4,42 @@ All notable changes to mc-api-server are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 semver.
 
-## [Unreleased]
+## [3.1.0] - 2026-01-15
+
+### Added
+
+- **`GET /manifest`** — the wrapper now publishes what it can do, so a bot
+  can report exactly which features it is missing instead of inferring it
+  from one semver compare. Returns the route census, a versioned feature
+  list with summaries, and the script actions the runner accepts.
+  Authenticated (a route census is reconnaissance); bots that get a 404
+  fall back to the `/instances/:id/info` version check.
+
+  It is **generated, not written**: `routes` comes from Fastify's own
+  router via an `onRoute` hook and `scriptActions` from the same
+  `SCRIPT_MAP` the runner validates against, so neither can describe
+  something this wrapper does not do. That distinction is the whole point
+  — serving `openapi.yaml` instead would have handed the bot a document
+  that has already lied (the 2.x spec described `/players`, `/logs`,
+  `/action` and `/whitelist/{username}`, none of which existed).
+
+  Three CI checks keep it honest, and each fails on real drift: every
+  feature's routes must exist, every instance route must belong to a
+  feature (so a new route cannot ship without the bot hearing about it),
+  and `openapi.yaml` must match the router exactly — which retires the
+  spec-drift problem the 3.0.0 rewrite had to clean up by hand.
+
+- **`bot contract` CI job** — runs minecraft-bot's real serverAccess against
+  this wrapper on every PR that touches `src/` or `openapi.yaml`. The bot casts
+  our responses to its own types, so renaming a field type-checks on both sides
+  and only shows up as a remote instance quietly returning `undefined`; `npm
+  test` here cannot see that. The check lives in the bot repo (it asserts the
+  bot's expectations) and this job points it at the checkout.
+
+### Fixed
+
+- README pointed at a `your-org/minecraft-server-setup` placeholder that was
+  never filled in.
 
 ### Security
 
