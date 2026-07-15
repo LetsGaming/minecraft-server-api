@@ -73,4 +73,14 @@ jobs:
         env:
           WRAPPER_DIR: ${{ github.workspace }}/api-wrapper
           E2E_DUMP_WRAPPER_LOG: "1"
-        run: npm run e2e:contract
+        run: |
+          # The check lives in the bot repo, so this job depends on the bot
+          # having landed its half. Say that, rather than letting npm report
+          # a bare "Missing script" that looks like a broken workflow.
+          if ! node -e "process.exit(require('./package.json').scripts['e2e:contract'] ? 0 : 1)"; then
+            echo "::error::${BOT_REPO}@${{ inputs.bot_ref || 'main' }} has no 'e2e:contract' script."
+            echo "The contract check lives in the bot repo — it asserts the bot's expectations of us."
+            echo "Land the bot's half first; this job goes green once that script exists on its default branch."
+            exit 1
+          fi
+          npm run e2e:contract

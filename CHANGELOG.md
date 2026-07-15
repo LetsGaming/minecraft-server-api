@@ -4,7 +4,7 @@ All notable changes to mc-api-server are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 semver.
 
-## [3.1.0] - 2026-01-15
+## [3.1.0] — 2026-07-15
 
 ### Added
 
