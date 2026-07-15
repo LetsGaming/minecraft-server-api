@@ -4,6 +4,44 @@ All notable changes to mc-api-server are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 semver.
 
+## [Unreleased]
+
+## [3.1.1] — 2026-07-15
+
+### Fixed
+
+- **Player stats were unreachable on servers that do not use the vanilla world
+  layout.** `getStats`, `listStatsUuids` and `deleteStats` each built
+  `<serverPath>/<level-name>/stats` and looked nowhere else. A Fabric instance
+  in the field keeps its stat files at `<level-name>/players/stats`, beside
+  `players/advancements`, and has no `<level-name>/stats` at all — so every
+  read missed, `/stats/:uuid` 404'd for players who plainly had stats, and
+  `/stats` answered `{uuids: []}` with a 200.
+
+  **The wrong path and an empty world are the same ENOENT**, which is why this
+  was silent rather than loud: 3.1.0 taught `listStatsUuids` to distinguish
+  unreadable from empty, but a mismatched path still reads as "nobody has
+  played here". Both layouts are now probed, resolved once per level name, and
+  the chosen directory is logged at startup. If a third layout turns up, add it
+  to `STATS_DIR_CANDIDATES` in `operations.ts`.
+
+  - **An unreadable stats directory was reported as an empty one.**
+  `GET /instances/:id/stats` caught every error from reading
+  `<serverPath>/<level-name>/stats` and answered `200 {"uuids": []}` — so a
+  permissions problem, a wrong `serverPath`, or a mismatched `level-name` was
+  indistinguishable from a world nobody has played on.
+
+  That is not a cosmetic difference. minecraft-bot takes an hourly stat
+  snapshot per server, and a snapshot with zero players acts as a **zero
+  baseline**: every period leaderboard then subtracts nothing and reports
+  all-time totals as the period's gains. A quiet wrong answer here became a
+  quiet wrong answer several layers away, in another repo.
+
+  ENOENT still returns `[]` — no stats directory genuinely means nobody has
+  played. Anything else (EACCES above all) now logs the path and the reason
+  and returns 500, so the operator sees the failure instead of the bot
+  inferring emptiness from it.
+
 ## [3.1.0] — 2026-07-15
 
 ### Added

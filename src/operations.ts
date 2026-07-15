@@ -190,6 +190,14 @@ export function createOperations(cfg: InstanceConfig) {
     }
   }
 
+  /**
+   * Layouts we know of, in order. Vanilla first — it is the documented
+   * default and what an unmodded server writes.
+   */
+  const STATS_DIR_CANDIDATES = ["stats", path.join("players", "stats")];
+
+  let _statsDir: { levelName: string; dir: string } | null = null;
+
   async function getLevelName(): Promise<string> {
     if (_levelNameCache && Date.now() - _levelNameCachedAt < LEVEL_NAME_TTL_MS) {
       return _levelNameCache;
@@ -244,9 +252,47 @@ export function createOperations(cfg: InstanceConfig) {
     }
   }
 
-  async function getStats(uuid: string): Promise<unknown> {
+  /**
+   * Where this world keeps player stat files.
+   *
+   * Vanilla puts them at `<level>/stats/`, and that is what this always
+   * assumed. Modded servers do not all agree: a Fabric instance in the
+   * wild keeps them at `<level>/players/stats/`, next to
+   * `players/advancements/`, and has no `<level>/stats/` at all.
+   *
+   * Probing matters more than it looks, because the failure is silent.
+   * With the wrong directory every read is an ENOENT — which is exactly
+   * what "nobody has played on this world yet" looks like — so the wrapper
+   * answered `{uuids: []}` and 404s, the bot believed it, and the
+   * leaderboards were simply empty. No error anywhere in the chain.
+   *
+   * Resolution is cached per level name, so a world switch re-probes.
+   */
+  async function resolveStatsDir(): Promise<string> {
     const levelName = await getLevelName();
-    const statsDir = path.join(cfg.serverPath, levelName, "stats");
+    if (_statsDir && _statsDir.levelName === levelName) return _statsDir.dir;
+
+    for (const rel of STATS_DIR_CANDIDATES) {
+      const dir = path.join(cfg.serverPath, levelName, rel);
+      try {
+        if (!fs.statSync(dir).isDirectory()) continue;
+      } catch {
+        continue; // next candidate
+      }
+      _statsDir = { levelName, dir };
+      log.info("stats", `[${cfg.id}] Reading player stats from ${dir}`);
+      return dir;
+    }
+
+    // None exist yet — which is normal on a fresh world, since the server
+    // creates the directory when someone first plays. Return the vanilla
+    // path so messages name the expected location, and do not cache: the
+    // real one appears later and must be picked up without a restart.
+    return path.join(cfg.serverPath, levelName, STATS_DIR_CANDIDATES[0]!);
+  }
+
+  async function getStats(uuid: string): Promise<unknown> {
+    const statsDir = await resolveStatsDir();
     // A-11: path.relative() guard — more robust than startsWith()
     const resolved = path.resolve(statsDir, `${uuid}.json`);
     const rel = path.relative(statsDir, resolved);
@@ -259,15 +305,34 @@ export function createOperations(cfg: InstanceConfig) {
   }
 
   async function listStatsUuids(): Promise<string[]> {
-    const levelName = await getLevelName();
-    const dir = path.join(cfg.serverPath, levelName, "stats");
+    const dir = await resolveStatsDir();
     try {
       return fs
         .readdirSync(dir)
         .filter((f) => f.endsWith(".json"))
         .map((f) => f.slice(0, -5));
-    } catch {
-      return [];
+    } catch (err) {
+      // ENOENT is an answer: no stats directory means nobody has played on
+      // this world yet, and [] is correct. It is only a safe conclusion
+      // because resolveStatsDir() checked every layout we know of first —
+      // when this looked in one hardcoded place, "wrong path" and "empty
+      // world" produced the same silent [].
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+
+      // Anything else — EACCES above all — is a failure, and returning []
+      // for it is worse than erroring. The bot cannot tell the two apart
+      // from an empty list, so it treated "I cannot read this" as "nobody
+      // has stats" and wrote hourly snapshots with zero players. Those act
+      // as a zero baseline, which silently turns every period leaderboard
+      // into all-time totals. Let it 500 instead: a loud failure the
+      // operator can act on beats a quiet wrong answer downstream.
+      log.error(
+        "stats",
+        `Cannot read ${dir}: ${(err as Error).message}. Check serverPath, ` +
+          `the world's level-name, and that this process can read the ` +
+          `stats directory.`,
+      );
+      throw err;
     }
   }
 
@@ -277,8 +342,7 @@ export function createOperations(cfg: InstanceConfig) {
    * instances. Returns true only when a file was actually removed.
    */
   async function deleteStats(uuid: string): Promise<boolean> {
-    const levelName = await getLevelName();
-    const statsDir = path.join(cfg.serverPath, levelName, "stats");
+    const statsDir = await resolveStatsDir();
     // A-11: same path.relative() traversal guard as getStats — the route
     // additionally enforces the UUID allowlist, this is defence in depth.
     const resolved = path.resolve(statsDir, `${uuid}.json`);

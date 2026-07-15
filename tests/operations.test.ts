@@ -174,6 +174,125 @@ describe("stats path guards (A-11)", () => {
   });
 });
 
+// ── The stats directory is not always <level>/stats ────────────────────
+// Found in production on a Fabric instance: no <level>/stats at all, the
+// files under <level>/players/stats next to players/advancements. Every
+// read was an ENOENT, which is indistinguishable from "nobody has played
+// yet", so the wrapper answered {uuids: []} and 404s with a 200-shaped
+// conscience and the bot's leaderboards were simply blank.
+
+describe("resolves the stats directory instead of assuming it", () => {
+  const UUID = "f168ae84-0305-4f7e-ba34-7ae738bb50d1";
+
+  /** Write a stats file at <level>/<rel>/<uuid>.json. */
+  function seed(cfg: InstanceConfig, rel: string[], uuid = UUID): string {
+    const dir = path.join(cfg.serverPath, "world", ...rel);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${uuid}.json`), '{"stats":{"minecraft:custom":{}}}');
+    return dir;
+  }
+
+  it("finds vanilla stats at <level>/stats", async () => {
+    const { cfg } = scaffold();
+    seed(cfg, ["stats"]);
+    const ops = createOperations(cfg);
+    expect(await ops.listStatsUuids()).toEqual([UUID]);
+    expect(await ops.getStats(UUID)).toEqual({ stats: { "minecraft:custom": {} } });
+  });
+
+  it("finds modded stats at <level>/players/stats", async () => {
+    const { cfg } = scaffold();
+    // Exactly the layout from the field report: no <level>/stats exists.
+    seed(cfg, ["players", "stats"]);
+    fs.mkdirSync(path.join(cfg.serverPath, "world", "players", "advancements"), {
+      recursive: true,
+    });
+    const ops = createOperations(cfg);
+    expect(await ops.listStatsUuids()).toEqual([UUID]);
+    expect(await ops.getStats(UUID)).toEqual({ stats: { "minecraft:custom": {} } });
+  });
+
+  it("deletes from whichever layout the world uses", async () => {
+    const { cfg } = scaffold();
+    const dir = seed(cfg, ["players", "stats"]);
+    const ops = createOperations(cfg);
+    expect(await ops.deleteStats(UUID)).toBe(true);
+    expect(fs.existsSync(path.join(dir, `${UUID}.json`))).toBe(false);
+  });
+
+  it("prefers vanilla when a world somehow has both", async () => {
+    const { cfg } = scaffold();
+    seed(cfg, ["stats"], UUID);
+    seed(cfg, ["players", "stats"], "00000000-0000-0000-0000-000000000000");
+    const ops = createOperations(cfg);
+    expect(await ops.listStatsUuids()).toEqual([UUID]);
+  });
+
+  it("picks up a directory created after the first miss", async () => {
+    const { cfg } = scaffold();
+    fs.mkdirSync(path.join(cfg.serverPath, "world"), { recursive: true });
+    const ops = createOperations(cfg);
+    // Fresh world: neither layout exists yet, and [] is the right answer.
+    expect(await ops.listStatsUuids()).toEqual([]);
+
+    // The server creates it when someone first plays. A cached miss would
+    // mean the wrapper never noticed until it was restarted.
+    seed(cfg, ["players", "stats"]);
+    expect(await ops.listStatsUuids()).toEqual([UUID]);
+  });
+});
+
+// ── listStatsUuids must not report a failure as emptiness ───────────────
+// Found in production: a stats directory the wrapper could not read came
+// back as `{uuids: []}` with a 200, so the bot recorded hourly snapshots
+// with zero players. Those act as a zero baseline on its side, silently
+// turning every period leaderboard into all-time totals. "No stats yet"
+// and "I cannot read the stats" must not look the same on the wire.
+
+describe("listStatsUuids distinguishes empty from unreadable", () => {
+  const UUID = "069a79f4-44e9-4726-a5be-fca90e38aaf5";
+
+  it("returns [] when the world has no stats directory yet", async () => {
+    const { cfg } = scaffold();
+    fs.mkdirSync(path.join(cfg.serverPath, "world"), { recursive: true });
+    const ops = createOperations(cfg);
+    await expect(ops.listStatsUuids()).resolves.toEqual([]);
+  });
+
+  it("returns [] when the stats directory exists but is empty", async () => {
+    const { cfg } = scaffold();
+    fs.mkdirSync(path.join(cfg.serverPath, "world", "stats"), {
+      recursive: true,
+    });
+    const ops = createOperations(cfg);
+    await expect(ops.listStatsUuids()).resolves.toEqual([]);
+  });
+
+  it("throws when the stats directory cannot be read", async () => {
+    const { cfg } = scaffold();
+    const statsDir = path.join(cfg.serverPath, "world", "stats");
+    fs.mkdirSync(statsDir, { recursive: true });
+    fs.writeFileSync(path.join(statsDir, `${UUID}.json`), '{"stats":{}}');
+
+    // Take away the read bit. Root ignores permissions, so skip there
+    // rather than assert something that cannot hold.
+    fs.chmodSync(statsDir, 0o000);
+    const readable = (() => {
+      try {
+        fs.readdirSync(statsDir);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    if (!readable) {
+      const ops = createOperations(cfg);
+      await expect(ops.listStatsUuids()).rejects.toThrow();
+    }
+    fs.chmodSync(statsDir, 0o755);
+  });
+});
+
 // ── M-13: capabilities shape ────────────────────────────────────────────
 
 describe("getCapabilities (M-13)", () => {

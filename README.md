@@ -156,7 +156,7 @@ All routes except `GET /health` require the `x-api-key` header. Error bodies are
 | `GET` | `/instances/:id/capabilities` | Which setup-suite artifacts exist |
 | `GET` | `/instances/:id/logs/tail?lines=N` | Last N lines of `latest.log` (1–500) |
 | `GET` | `/instances/:id/logs/stream` | SSE stream of new log lines |
-| `GET` | `/instances/:id/stats` | Player UUIDs with stats files |
+| `GET` | `/instances/:id/stats` | Player UUIDs with stats files (resolves `<level>/stats` or `<level>/players/stats`) |
 | `GET` | `/instances/:id/stats/:uuid` | Stats JSON for one player |
 | `DELETE` | `/instances/:id/stats/:uuid` | Delete a player's stats file (bot `/server prune-stats`) |
 | `POST` | `/instances/:id/command` | Send a console command (RCON, screen fallback) |
