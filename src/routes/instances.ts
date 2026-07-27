@@ -156,7 +156,7 @@ export function registerInstanceRoutes(
     const entry = resolve(req, reply);
     if (!entry) return;
     try {
-      return { whitelist: entry.getWhitelist() };
+      return { whitelist: await entry.getWhitelist() };
     } catch (err) {
       return internalError(reply, `whitelist ${req.params.id}`, err);
     }
@@ -169,7 +169,7 @@ export function registerInstanceRoutes(
     const entry = resolve(req, reply);
     if (!entry) return;
     try {
-      return { usercache: entry.getUserCache() };
+      return { usercache: await entry.getUserCache() };
     } catch (err) {
       return internalError(reply, `usercache ${req.params.id}`, err);
     }
@@ -190,7 +190,7 @@ export function registerInstanceRoutes(
     if (!entry) return;
     // F-008: null means file not found → 404
     try {
-      const result = entry.getModSlugs();
+      const result = await entry.getModSlugs();
       if (result === null) {
         return reply.status(404).send({ error: "Mod list not found" });
       }
@@ -204,7 +204,7 @@ export function registerInstanceRoutes(
     const entry = resolve(req, reply);
     if (!entry) return;
     try {
-      return entry.getBackups();
+      return await entry.getBackups();
     } catch (err) {
       return internalError(reply, `backups ${req.params.id}`, err);
     }
@@ -215,7 +215,7 @@ export function registerInstanceRoutes(
     const entry = resolve(req, reply);
     if (!entry) return;
     try {
-      return entry.getCapabilities();
+      return await entry.getCapabilities();
     } catch (err) {
       return internalError(reply, `capabilities ${req.params.id}`, err);
     }
@@ -272,6 +272,20 @@ export function registerInstanceRoutes(
   );
 
   // ── Runtime routes ──────────────────────────────────────────────────────
+
+  // ── Health: what the server is doing, and whether it is answering ───────
+  // The distinction /running cannot make. A server pinned by chunk loading
+  // is `unresponsive`, not `offline`, and a client that treats those the
+  // same alerts on the wrong thing (see health.ts).
+  app.get<{ Params: InstanceParams }>(`${P}/health`, async (req, reply) => {
+    const entry = resolve(req, reply);
+    if (!entry) return;
+    try {
+      return await entry.getHealth();
+    } catch (err) {
+      return internalError(reply, `health ${req.params.id}`, err);
+    }
+  });
 
   app.get<{ Params: InstanceParams }>(`${P}/running`, async (req, reply) => {
     const entry = resolve(req, reply);

@@ -3,11 +3,13 @@
  * at startup; reused across requests. Every filesystem/shell/RCON touch
  * for server data lives here — routes stay thin.
  */
-import fs from "fs";
+import fsp from "fs/promises";
 import path from "path";
 import { execFile, spawn } from "child_process";
 
 import { RconClient } from "./rcon.js";
+import { cached } from "./cache.js";
+import { createHealthMonitor } from "./health.js";
 import { execSafe } from "./exec.js";
 import { log } from "./logger.js";
 import type {
@@ -15,6 +17,7 @@ import type {
   BackupSummary,
   Capabilities,
   InstanceConfig,
+  InstanceHealth,
   PlayerList,
   ScriptResult,
   Tps,
@@ -39,6 +42,12 @@ const SCRIPT_TIMEOUTS: Record<string, number> = {
   status: 15_000,
 };
 
+// TPS moves slowly and costs an RCON round-trip against the very thread that
+// is struggling when anyone bothers to ask. Two callers a second apart share
+// one measurement; a loaded server serves the last one rather than queueing.
+const TPS_FRESH_MS = 5_000;
+const TPS_STALE_MS = 30_000;
+
 export type Operations = ReturnType<typeof createOperations>;
 
 /**
@@ -50,6 +59,16 @@ export function sanitizeScreenCommand(command: string): string {
   return command.replace(/[\r\n\x00-\x1f\x7f]/g, "");
 }
 
+/** Non-blocking existsSync. Every probe here sits on the request path. */
+async function exists(target: string): Promise<boolean> {
+  try {
+    await fsp.access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────
 
 export function createOperations(cfg: InstanceConfig) {
@@ -59,9 +78,16 @@ export function createOperations(cfg: InstanceConfig) {
       ? new RconClient(cfg.rconHost, cfg.rconPort, cfg.rconPassword)
       : null;
 
+  // ── Health — the one place liveness and responsiveness are decided ────
+  // Shared by isRunning, getHealth and getList so a status poll, a player
+  // list and a liveness check between them cost one RCON round-trip.
+  const health = createHealthMonitor(cfg, rcon, () => getGamePort());
+
   // ── Level-name cache — per instance (A-03) ────────────────────────────
   let _levelNameCache: string | null = null;
   let _levelNameCachedAt = 0;
+  let _gamePortCache: number | null | undefined = undefined;
+  let _gamePortAt = 0;
   const LEVEL_NAME_TTL_MS = 60_000;
 
   // ── Operations ────────────────────────────────────────────────────────
@@ -92,56 +118,26 @@ export function createOperations(cfg: InstanceConfig) {
     return null;
   }
 
+  /** Full three-state health — see health.ts for why one boolean was not enough. */
+  async function getHealth(): Promise<InstanceHealth> {
+    return health.get();
+  }
+
+  /**
+   * Legacy boolean. It now means "the server process is up", which is what
+   * every caller always wanted it to mean — it used to mean "RCON answered
+   * within three seconds", so a loaded server reported itself stopped.
+   * New clients should read /health and handle `unresponsive` explicitly.
+   */
   async function isRunning(): Promise<boolean> {
-    if (rcon) {
-      if (Date.now() - rcon.lastSuccessTime < 15_000) return true;
-      for (let i = 0; i < 2; i++) {
-        if (i > 0) await new Promise((r) => setTimeout(r, 500));
-        try {
-          await rcon.send("list", 3000);
-          return true;
-        } catch {
-          /* try again */
-        }
-      }
-      return false;
-    }
-    const { stdout, ok } = await execSafe(
-      "sudo",
-      ["-n", "-u", cfg.linuxUser, "screen", "-list"],
-      10_000,
-    );
-    if (!ok) return false;
-    // F-011: escape instance name before embedding in regex so names
-    // like "server.1" don't silently misfire on the dot metacharacter.
-    const escaped = cfg.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`\\b\\d+\\.${escaped}\\b`).test(stdout);
+    return (await health.get()).state !== "offline";
   }
 
   async function getList(): Promise<PlayerList> {
-    if (rcon) {
-      try {
-        const r = await rcon.send("list");
-        const cm =
-          /There are\s+(\d+)\s*(?:of a max of\s*(\d+)|\/\s*(\d+))\s*players online/i.exec(
-            r,
-          );
-        const pm = /players online:\s*(.*)$/i.exec(r);
-        return {
-          playerCount: cm?.[1] ?? "0",
-          maxPlayers: cm?.[2] ?? cm?.[3] ?? "?",
-          players: pm?.[1]
-            ? pm[1].split(",").map((s) => s.trim()).filter(Boolean)
-            : [],
-        };
-      } catch {
-        /* fall through */
-      }
-    }
-    return { playerCount: "0", maxPlayers: "?", players: [] };
+    return health.getList();
   }
 
-  async function getTps(): Promise<Tps> {
+  async function loadTps(): Promise<Tps> {
     if (!rcon) return null;
 
     // Try Paper-style /tps first
@@ -190,6 +186,15 @@ export function createOperations(cfg: InstanceConfig) {
     }
   }
 
+  const tpsCache = cached(loadTps, {
+    freshMs: TPS_FRESH_MS,
+    staleMs: TPS_STALE_MS,
+  });
+
+  async function getTps(): Promise<Tps> {
+    return (await tpsCache.get()).value;
+  }
+
   /**
    * Layouts we know of, in order. Vanilla first — it is the documented
    * default and what an unmodded server writes.
@@ -204,7 +209,7 @@ export function createOperations(cfg: InstanceConfig) {
     }
     const propsPath = path.join(cfg.serverPath, "server.properties");
     try {
-      const text = fs.readFileSync(propsPath, "utf-8");
+      const text = await fsp.readFile(propsPath, "utf-8");
       const m = /^level-name\s*=\s*(.+)$/m.exec(text);
       _levelNameCache = m?.[1]?.trim() ?? "world";
     } catch {
@@ -214,16 +219,42 @@ export function createOperations(cfg: InstanceConfig) {
     return _levelNameCache;
   }
 
+  /**
+   * `server-port` from server.properties, cached like the level name.
+   *
+   * Reported on /health so a client knows where to ping the game server
+   * directly — which matters exactly when this wrapper is unreachable and
+   * cannot be asked.
+   */
+  async function getGamePort(): Promise<number | null> {
+    if (_gamePortCache !== undefined && Date.now() - _gamePortAt < LEVEL_NAME_TTL_MS) {
+      return _gamePortCache;
+    }
+    try {
+      const text = await fsp.readFile(
+        path.join(cfg.serverPath, "server.properties"),
+        "utf-8",
+      );
+      const m = /^server-port\s*=\s*(\d{1,5})\s*$/m.exec(text);
+      const port = m?.[1] ? Number(m[1]) : NaN;
+      _gamePortCache = Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
+    } catch {
+      _gamePortCache = null;
+    }
+    _gamePortAt = Date.now();
+    return _gamePortCache;
+  }
+
   async function tailLog(lines: number): Promise<string> {
     const logFile = path.join(cfg.serverPath, "logs", "latest.log");
     const { stdout, ok } = await execSafe("tail", ["-n", String(lines), logFile]);
     return ok ? stdout : "";
   }
 
-  function getWhitelist(): unknown[] {
+  async function getWhitelist(): Promise<unknown[]> {
     try {
       const data: unknown = JSON.parse(
-        fs.readFileSync(path.join(cfg.serverPath, "whitelist.json"), "utf-8"),
+        await fsp.readFile(path.join(cfg.serverPath, "whitelist.json"), "utf-8"),
       );
       return Array.isArray(data) ? data : [];
     } catch {
@@ -238,10 +269,10 @@ export function createOperations(cfg: InstanceConfig) {
    * the {name, uuid} shape the bot expects; Mojang's extra fields
    * (expiresOn) are dropped.
    */
-  function getUserCache(): WhitelistEntry[] {
+  async function getUserCache(): Promise<WhitelistEntry[]> {
     try {
       const data: unknown = JSON.parse(
-        fs.readFileSync(path.join(cfg.serverPath, "usercache.json"), "utf-8"),
+        await fsp.readFile(path.join(cfg.serverPath, "usercache.json"), "utf-8"),
       );
       if (!Array.isArray(data)) return [];
       return (data as Array<{ name?: unknown; uuid?: unknown }>)
@@ -275,7 +306,7 @@ export function createOperations(cfg: InstanceConfig) {
     for (const rel of STATS_DIR_CANDIDATES) {
       const dir = path.join(cfg.serverPath, levelName, rel);
       try {
-        if (!fs.statSync(dir).isDirectory()) continue;
+        if (!(await fsp.stat(dir)).isDirectory()) continue;
       } catch {
         continue; // next candidate
       }
@@ -298,7 +329,7 @@ export function createOperations(cfg: InstanceConfig) {
     const rel = path.relative(statsDir, resolved);
     if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
     try {
-      return JSON.parse(fs.readFileSync(resolved, "utf-8")) as unknown;
+      return JSON.parse(await fsp.readFile(resolved, "utf-8")) as unknown;
     } catch {
       return null;
     }
@@ -307,8 +338,7 @@ export function createOperations(cfg: InstanceConfig) {
   async function listStatsUuids(): Promise<string[]> {
     const dir = await resolveStatsDir();
     try {
-      return fs
-        .readdirSync(dir)
+      return (await fsp.readdir(dir))
         .filter((f) => f.endsWith(".json"))
         .map((f) => f.slice(0, -5));
     } catch (err) {
@@ -349,7 +379,7 @@ export function createOperations(cfg: InstanceConfig) {
     const rel = path.relative(statsDir, resolved);
     if (rel.startsWith("..") || path.isAbsolute(rel)) return false;
     try {
-      fs.rmSync(resolved);
+      await fsp.rm(resolved);
       return true;
     } catch {
       return false;
@@ -363,29 +393,39 @@ export function createOperations(cfg: InstanceConfig) {
    * GET /instances/:id/capabilities and fall back to assuming everything
    * is available when the route is missing (older wrappers).
    */
-  function getCapabilities(): Capabilities {
-    const scriptExists = (rel: string): boolean =>
-      !!cfg.scriptsDir && fs.existsSync(path.join(cfg.scriptsDir, rel));
+  async function getCapabilities(): Promise<Capabilities> {
+    const scriptExists = async (rel: string): Promise<boolean> =>
+      !!cfg.scriptsDir && (await exists(path.join(cfg.scriptsDir, rel)));
+    // Independent probes, so run them together rather than serially — this
+    // is up to eight stat() calls on a disk the server may be hammering.
+    const [start, stop, restart, backup, status, backups, modManifest, variablesFile] =
+      await Promise.all([
+        scriptExists(SCRIPT_MAP.start!),
+        scriptExists(SCRIPT_MAP.stop!),
+        scriptExists(SCRIPT_MAP.restart!),
+        scriptExists(SCRIPT_MAP.backup!),
+        scriptExists(SCRIPT_MAP.status!),
+        cfg.backupsPath ? exists(cfg.backupsPath) : Promise.resolve(false),
+        scriptExists(path.join("common", "downloaded_versions.json")),
+        scriptExists(path.join("common", "variables.txt")),
+      ]);
     return {
-      scripts: {
-        start: scriptExists(SCRIPT_MAP.start!),
-        stop: scriptExists(SCRIPT_MAP.stop!),
-        restart: scriptExists(SCRIPT_MAP.restart!),
-        backup: scriptExists(SCRIPT_MAP.backup!),
-        status: scriptExists(SCRIPT_MAP.status!),
-      },
-      backups: !!cfg.backupsPath && fs.existsSync(cfg.backupsPath),
-      modManifest: scriptExists(path.join("common", "downloaded_versions.json")),
-      variablesFile: scriptExists(path.join("common", "variables.txt")),
+      scripts: { start, stop, restart, backup, status },
+      backups,
+      modManifest,
+      variablesFile,
     };
   }
 
-  function getModSlugs(): { slugs: string[]; mtimeMs: number } | null {
-    // A-04: single try/catch — avoids TOCTOU existsSync/statSync/readFileSync
+  async function getModSlugs(): Promise<{
+    slugs: string[];
+    mtimeMs: number;
+  } | null> {
+    // A-04: single try/catch — avoids TOCTOU exists/stat/read
     const jsonPath = path.join(cfg.scriptsDir, "common", "downloaded_versions.json");
     try {
-      const stat = fs.statSync(jsonPath);
-      const raw = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as {
+      const stat = await fsp.stat(jsonPath);
+      const raw = JSON.parse(await fsp.readFile(jsonPath, "utf-8")) as {
         mods?: Record<string, unknown>;
       };
       return { slugs: Object.keys(raw.mods ?? {}), mtimeMs: stat.mtimeMs };
@@ -395,7 +435,7 @@ export function createOperations(cfg: InstanceConfig) {
     }
   }
 
-  function getBackups(): BackupSummary {
+  async function getBackups(): Promise<BackupSummary> {
     if (!cfg.backupsPath) return { dirs: [], totalBytes: 0 };
 
     const subdirs = [
@@ -405,47 +445,58 @@ export function createOperations(cfg: InstanceConfig) {
       "archives/monthly",
       "archives/update",
     ];
-    const dirs: BackupDirInfo[] = [];
-    let totalBytes = 0;
+    const backupsPath = cfg.backupsPath;
 
-    for (const dir of subdirs) {
-      const fullDir = path.join(cfg.backupsPath, dir);
-      if (!fs.existsSync(fullDir)) continue;
-
-      const files = fs
-        .readdirSync(fullDir)
-        .filter((f) => f.endsWith(".tar.zst") || f.endsWith(".tar.gz"));
-      if (!files.length) continue;
+    // Backup tiers accumulate thousands of archives, and this used to be
+    // five synchronous readdir + stat passes on the event loop — every other
+    // request, /health included, waited behind it. Async, and the five tiers
+    // in parallel.
+    async function readTier(dir: string): Promise<BackupDirInfo | null> {
+      const fullDir = path.join(backupsPath, dir);
+      let files: string[];
+      try {
+        files = (await fsp.readdir(fullDir)).filter(
+          (f) => f.endsWith(".tar.zst") || f.endsWith(".tar.gz"),
+        );
+      } catch {
+        return null; // tier not present
+      }
+      if (!files.length) return null;
 
       files.sort().reverse();
       const latest = files[0]!;
-      // A-06: stat in its own try/catch — backup rotation can delete the
-      // file between readdirSync and statSync; skip this dir rather than crash.
-      let stat: fs.Stats;
+      // A-06: backup rotation can delete the file between readdir and stat;
+      // skip this tier rather than fail the whole response.
       try {
-        stat = fs.statSync(path.join(fullDir, latest));
+        const stat = await fsp.stat(path.join(fullDir, latest));
+        return {
+          dir,
+          count: files.length,
+          latestFile: latest,
+          latestMtimeMs: stat.mtimeMs,
+          latestSizeBytes: stat.size,
+        };
       } catch {
-        continue;
+        return null;
       }
-      totalBytes += stat.size;
-      dirs.push({
-        dir,
-        count: files.length,
-        latestFile: latest,
-        latestMtimeMs: stat.mtimeMs,
-        latestSizeBytes: stat.size,
-      });
     }
 
-    return { dirs, totalBytes };
+    const dirs = (await Promise.all(subdirs.map(readTier))).filter(
+      (d): d is BackupDirInfo => d !== null,
+    );
+    return {
+      dirs,
+      totalBytes: dirs.reduce((sum, d) => sum + d.latestSizeBytes, 0),
+    };
   }
 
-  function runScript(action: string, args?: string[]): Promise<ScriptResult> {
+  async function runScript(action: string, args?: string[]): Promise<ScriptResult> {
     const scriptRelPath = SCRIPT_MAP[action];
     if (!scriptRelPath) throw new Error(`Unknown script action: ${action}`);
 
     const scriptPath = path.join(cfg.scriptsDir, scriptRelPath);
-    if (!fs.existsSync(scriptPath)) throw new Error(`Script not found: ${scriptPath}`);
+    if (!(await exists(scriptPath)))
+      throw new Error(`Script not found: ${scriptPath}`);
 
     const timeoutMs = SCRIPT_TIMEOUTS[action] ?? 120_000;
 
@@ -521,6 +572,7 @@ export function createOperations(cfg: InstanceConfig) {
 
   return {
     sendCommand,
+    getHealth,
     isRunning,
     getList,
     getTps,

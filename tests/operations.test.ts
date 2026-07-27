@@ -296,10 +296,10 @@ describe("listStatsUuids distinguishes empty from unreadable", () => {
 // ── M-13: capabilities shape ────────────────────────────────────────────
 
 describe("getCapabilities (M-13)", () => {
-  it("reports all-false for a plain server without suite artifacts", () => {
+  it("reports all-false for a plain server without suite artifacts", async () => {
     const { cfg } = scaffold();
     const ops = createOperations(cfg);
-    expect(ops.getCapabilities()).toEqual({
+    expect(await ops.getCapabilities()).toEqual({
       scripts: { start: false, stop: false, restart: false, backup: false, status: false },
       backups: false,
       modManifest: false,
@@ -307,7 +307,7 @@ describe("getCapabilities (M-13)", () => {
     });
   });
 
-  it("reports all-true for a full suite layout (shape matches the bot's ServerCapabilities)", () => {
+  it("reports all-true for a full suite layout (shape matches the bot's ServerCapabilities)", async () => {
     const { cfg, root } = scaffold();
     for (const rel of [
       "start.sh",
@@ -325,7 +325,7 @@ describe("getCapabilities (M-13)", () => {
     cfg.backupsPath = path.join(root, "backups");
     fs.mkdirSync(cfg.backupsPath);
     const ops = createOperations(cfg);
-    expect(ops.getCapabilities()).toEqual({
+    expect(await ops.getCapabilities()).toEqual({
       scripts: { start: true, stop: true, restart: true, backup: true, status: true },
       backups: true,
       modManifest: true,
@@ -333,11 +333,11 @@ describe("getCapabilities (M-13)", () => {
     });
   });
 
-  it("detects partial layouts per script", () => {
+  it("detects partial layouts per script", async () => {
     const { cfg } = scaffold();
     fs.writeFileSync(path.join(cfg.scriptsDir, "start.sh"), "");
     const ops = createOperations(cfg);
-    const caps = ops.getCapabilities();
+    const caps = await ops.getCapabilities();
     expect(caps.scripts.start).toBe(true);
     expect(caps.scripts.stop).toBe(false);
   });
@@ -346,7 +346,7 @@ describe("getCapabilities (M-13)", () => {
 // ── usercache filtering ─────────────────────────────────────────────────
 
 describe("getUserCache", () => {
-  it("filters entries to the {name, uuid} shape the bot expects", () => {
+  it("filters entries to the {name, uuid} shape the bot expects", async () => {
     const { cfg } = scaffold();
     fs.writeFileSync(
       path.join(cfg.serverPath, "usercache.json"),
@@ -358,17 +358,17 @@ describe("getUserCache", () => {
       ]),
     );
     const ops = createOperations(cfg);
-    expect(ops.getUserCache()).toEqual([
+    expect(await ops.getUserCache()).toEqual([
       { name: "Steve", uuid: "u-1" },
       { name: "Alex", uuid: "u-4" },
     ]);
   });
 
-  it("returns [] for a missing or malformed file", () => {
+  it("returns [] for a missing or malformed file", async () => {
     const { cfg } = scaffold();
     const ops = createOperations(cfg);
-    expect(ops.getUserCache()).toEqual([]);
+    expect(await ops.getUserCache()).toEqual([]);
     fs.writeFileSync(path.join(cfg.serverPath, "usercache.json"), "{not json");
-    expect(ops.getUserCache()).toEqual([]);
+    expect(await ops.getUserCache()).toEqual([]);
   });
 });

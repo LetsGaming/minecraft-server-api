@@ -33,6 +33,46 @@ export interface PlayerList {
   players: string[];
 }
 
+// ── Health (the `server-health` manifest feature, v1) ─────────────────────
+
+/**
+ * What the Minecraft server is doing. Note what is *not* here: "the wrapper
+ * is down". This process cannot report its own absence, so that distinction
+ * belongs to the client (minecraft-bot models it as `unreachable`), and
+ * conflating the two is the bug this feature exists to fix.
+ */
+export type ServerState = "online" | "unresponsive" | "offline";
+
+/** Which probe established that the process exists. `none` = all said no. */
+export type ProcessProbe = "rcon" | "socket" | "process" | "screen" | "none";
+
+export interface InstanceHealth {
+  state: ServerState;
+  /** A probe confirmed the process. Never inferred from `state`. */
+  processUp: boolean;
+  probe: ProcessProbe;
+  rcon: {
+    configured: boolean;
+    responsive: boolean;
+    /** Since the last successful round-trip; null when there has never been one. */
+    lastSuccessMsAgo: number | null;
+  };
+  /**
+   * The server's `server-port` from server.properties, or null when it could
+   * not be read.
+   *
+   * Here so a client can ping the game server directly — which it needs most
+   * when this wrapper is the thing that has stopped answering. Telling it the
+   * port while we still can is what makes that fallback work without asking
+   * the operator to configure it twice.
+   */
+  gamePort: number | null;
+  /** When the underlying probe ran (epoch ms). */
+  checkedAt: number;
+  /** Age of the served snapshot. Non-zero is normal and expected under load. */
+  ageMs: number;
+}
+
 export interface TpsPaper {
   type: "paper";
   tps1m: number;

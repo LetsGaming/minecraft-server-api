@@ -33,6 +33,51 @@ components:
         error:
           type: string
 
+    InstanceHealth:
+      type: object
+      description: >
+        Three-state server health. `state` separates the two questions
+        `/running` conflated: whether the server process is up, and whether it
+        is answering RCON. A server pinned by chunk loading is `unresponsive`,
+        not `offline`.
+
+        Note what is absent: "the wrapper is down". This process cannot report
+        its own absence — clients model that themselves (minecraft-bot calls it
+        `unreachable`) and must not treat it as `offline`.
+      required: [state, processUp, probe, rcon, checkedAt, ageMs]
+      properties:
+        state:
+          type: string
+          enum: [online, unresponsive, offline]
+        processUp:
+          type: boolean
+          description: A probe confirmed the process. Never inferred from `state`.
+        probe:
+          type: string
+          enum: [rcon, socket, process, screen, none]
+          description: >
+            Which probe established liveness. `none` means every probe came
+            back negative, which is the only thing that means "stopped".
+        rcon:
+          type: object
+          required: [configured, responsive, lastSuccessMsAgo]
+          properties:
+            configured: { type: boolean }
+            responsive: { type: boolean }
+            lastSuccessMsAgo:
+              type: integer
+              nullable: true
+              description: Since the last successful round-trip; null if never.
+        checkedAt:
+          type: integer
+          description: When the underlying probe ran (epoch ms).
+        ageMs:
+          type: integer
+          description: >
+            Age of the served snapshot. Non-zero is normal and expected: under
+            load a recent answer is served rather than queueing behind a fresh
+            probe of a server that is slow precisely because it is busy.
+
     ProcessUsage:
       type: object
       required: [pid, cpuPercent, rssBytes]
@@ -258,13 +303,35 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/InstanceNotFound" }
 
-  /instances/{id}/running:
+  /instances/{id}/health:
     get:
-      summary: Is the server process alive?
+      summary: Server health — liveness and responsiveness, reported separately
+      description: >
+        The `server-health` feature. Prefer this over `/running`: it can tell a
+        stopped server from one that is merely too loaded to answer, and it
+        reports which probe established liveness.
       parameters: [{ $ref: "#/components/parameters/InstanceId" }]
       responses:
         "200":
-          description: Liveness (RCON probe or screen session presence).
+          description: Current health, from a short-TTL single-flight probe.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InstanceHealth" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/running:
+    get:
+      summary: Is the server process alive? (legacy — prefer /health)
+      description: >
+        True when the server process is running, whether or not it is
+        answering RCON. Until 3.2.0 this probed RCON and reported false on a
+        timeout, so a loaded server looked stopped. Kept for older clients;
+        `/health` carries the distinction.
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: Process liveness — equivalent to `/health` state != offline.
           content:
             application/json:
               schema:

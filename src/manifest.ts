@@ -63,6 +63,13 @@ export const FEATURES: Record<string, FeatureSpec> = {
     ],
     summary: "Liveness, player list, TPS, and level name.",
   },
+  "server-health": {
+    version: 1,
+    routes: ["GET /instances/:id/health"],
+    summary:
+      "Three-state server health: process liveness and RCON responsiveness " +
+      "reported separately, so a loaded server is not mistaken for a stopped one.",
+  },
   "host-info": {
     version: 1,
     routes: ["GET /instances/:id/info"],

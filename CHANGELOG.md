@@ -6,6 +6,91 @@ semver.
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /instances/:id/health` — liveness and responsiveness, reported
+  separately** (`server-health` manifest feature, v1).
+
+  `/running` answered one question — *did RCON reply to `list` within three
+  seconds?* — and every caller read it as a different one: *is the server up?*
+  Those come apart exactly when it matters. A server pinned by chunk
+  generation, a busy evening, or heavy mob-AI simulation stops answering RCON
+  long before it stops running, and a server still loading its world has not
+  started answering yet. All of them reported `running: false`.
+
+  The new route reports `state` as `online` / `unresponsive` / `offline`,
+  alongside `processUp`, which probe established it, and the RCON picture as
+  its own object. Liveness now comes from probes that survive a stalled game
+  thread, cheapest first: a TCP connect to the RCON port (accepted by the
+  JVM's Netty IO threads while the main thread is blocked), then `ps` for the
+  instance user's java process (no sudo, and it covers the startup window
+  before RCON binds), then `screen -list`. RCON is used only for
+  responsiveness.
+
+  Note what the body deliberately cannot say: "the wrapper is down". This
+  process cannot report its own absence — clients model that themselves and
+  must not fold it into `offline`.
+
+  The body also carries `gamePort`, read from `server.properties`. That is
+  there for the case this endpoint cannot cover: a client that has lost
+  contact with this wrapper can ping the Minecraft server directly, and
+  telling it the port while we still can is what makes that work without the
+  operator configuring the same thing twice.
+
+### Changed
+
+- **`/running` is now process liveness, not an RCON probe.** `running` is
+  `state !== "offline"`, so a loaded server stops reporting itself stopped
+  without any client change. Clients that need the distinction should move to
+  `/health`.
+
+- **Concurrent reads share one round-trip.** Health, the player list and TPS
+  go through a single-flight, short-TTL cache that serves a recent value while
+  a refresh is in flight rather than queueing. A status poll, a `/list` and a
+  TPS check arriving together used to start three RCON commands against the
+  same stalled game thread and each waited for the ones in front of it — which
+  is how the *API* came to look unresponsive when only the server was. The
+  health probe's own `list` output now feeds `GET /list`, so the two cost one
+  command between them.
+
+- **An unresponsive server keeps its last known player roster** (up to two
+  minutes) instead of answering with zero players. "0 online" is a claim, and
+  a stale-but-true roster beats a fresh lie — a lag spike is not an exodus.
+
+- **Every filesystem read is off the event loop.** `getBackups`,
+  `getWhitelist`, `getUserCache`, `getStats`, `listStatsUuids`,
+  `getCapabilities` and `getModSlugs` were synchronous. A backup scan across
+  five tiers of thousands of archives blocked *every* concurrent request,
+  `/health` included. The backup tiers are also scanned in parallel now.
+
+### Fixed
+
+- **The log stream dropped filesystem events that arrived mid-read.**
+  `processLogChanges` returned early when a read was already draining, so
+  those lines waited for the next fs event or the 1 s poller. On a busy server
+  — longest reads, fastest writes — that was most of them, and it is the
+  wrapper's half of the lag minecraft-bot's chat bridge shows between someone
+  typing in game and the message reaching Discord. Events are coalesced and
+  re-run on completion now, and the 1 MB-per-cycle catch-up clamp no longer
+  costs a poll interval per chunk.
+
+- **An unreadable stats directory was reported as an empty one.**
+  `GET /instances/:id/stats` caught every error from reading
+  `<serverPath>/<level-name>/stats` and answered `200 {"uuids": []}` — so a
+  permissions problem, a wrong `serverPath`, or a mismatched `level-name` was
+  indistinguishable from a world nobody has played on.
+
+  That is not a cosmetic difference. minecraft-bot takes an hourly stat
+  snapshot per server, and a snapshot with zero players acts as a **zero
+  baseline**: every period leaderboard then subtracts nothing and reports
+  all-time totals as the period's gains. A quiet wrong answer here became a
+  quiet wrong answer several layers away, in another repo.
+
+  ENOENT still returns `[]` — no stats directory genuinely means nobody has
+  played. Anything else (EACCES above all) now logs the path and the reason
+  and returns 500, so the operator sees the failure instead of the bot
+  inferring emptiness from it.
+
 ## [3.1.1] — 2026-07-15
 
 ### Fixed
@@ -25,22 +110,20 @@ semver.
   the chosen directory is logged at startup. If a third layout turns up, add it
   to `STATS_DIR_CANDIDATES` in `operations.ts`.
 
-  - **An unreadable stats directory was reported as an empty one.**
-  `GET /instances/:id/stats` caught every error from reading
-  `<serverPath>/<level-name>/stats` and answered `200 {"uuids": []}` — so a
-  permissions problem, a wrong `serverPath`, or a mismatched `level-name` was
-  indistinguishable from a world nobody has played on.
+### Added
 
-  That is not a cosmetic difference. minecraft-bot takes an hourly stat
-  snapshot per server, and a snapshot with zero players acts as a **zero
-  baseline**: every period leaderboard then subtracts nothing and reports
-  all-time totals as the period's gains. A quiet wrong answer here became a
-  quiet wrong answer several layers away, in another repo.
+- **TPS parsing now has regression tests** (`tests/tps.test.ts`, 10 cases).
+  The parser already carried three fixes, and had no test at all — the guards
+  lived in minecraft-bot, against the RCON client it used to own. Bot 5.0.0
+  drops local mode, so the wrapper is now the only side that ever sees a `tps`
+  response and inherits the bugs along with the job:
 
-  ENOENT still returns `[]` — no stats directory genuinely means nobody has
-  played. Anything else (EACCES above all) now logs the path and the reason
-  and returns 500, so the operator sees the failure instead of the bot
-  inferring emptiness from it.
+  - an unanchored regex reading "ticking 12, 34, 56 ms behind" as a TPS
+    triplet and firing a false Low TPS alert;
+  - a missing tick-query line parsed as zero TPS rather than "no answer";
+  - `1000 / mspt` uncapped, reporting >20 TPS on a fast server.
+
+  Each was verified to fail the suite when reintroduced.
 
 ## [3.1.0] — 2026-07-15
 

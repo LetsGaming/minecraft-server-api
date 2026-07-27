@@ -97,6 +97,47 @@ describe("GET /instances/:id/logs/stream", () => {
     expect(event!.line).toContain("Steve joined the game");
   }, 10_000);
 
+  it("delivers a burst of appends without waiting out the poller", async () => {
+    // The tail-latency bug behind the chat bridge lag: an fs event arriving
+    // while a read was still draining was dropped, so those lines waited for
+    // the next event or the 1 s poller. On a busy server — longest reads,
+    // fastest writes — that was most of them. Events are coalesced now, so a
+    // rapid burst has to arrive well inside one poll interval.
+    const controller = new AbortController();
+    const res = await fetch(`${base}/instances/survival/logs/stream`, {
+      headers: { "x-api-key": KEY },
+      signal: controller.signal,
+    });
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    buffer += decoder.decode((await reader.read()).value, { stream: true });
+
+    const BURST = 12;
+    for (let i = 0; i < BURST; i++) {
+      fs.appendFileSync(logFile, `Server thread/INFO: <Steve> burst ${i}\n`);
+    }
+
+    const started = Date.now();
+    const deadline = started + 5_000;
+    const seen = new Set<number>();
+    while (Date.now() < deadline && seen.size < BURST) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      for (const m of buffer.matchAll(/burst (\d+)/g)) {
+        seen.add(Number(m[1]));
+      }
+    }
+    const elapsed = Date.now() - started;
+    controller.abort();
+
+    expect(seen.size).toBe(BURST);
+    // Generous, because CI is slow — but a dropped event costs a full 1 000 ms
+    // poll interval each, so the old behaviour could not pass this.
+    expect(elapsed).toBeLessThan(900);
+  }, 15_000);
+
   it("requires the API key", async () => {
     const res = await fetch(`${base}/instances/survival/logs/stream`);
     expect(res.status).toBe(401);

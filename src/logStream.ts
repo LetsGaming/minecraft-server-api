@@ -53,7 +53,13 @@ export function initLogStream(
     const clients = new Set<ServerResponse>();
     // SEC-06: clients currently backpressured (write() returned false).
     const paused = new Set<ServerResponse>();
-    const state = { lastSize: 0, reading: false };
+    // `pending` is what keeps the tail live under load — see below.
+    const state = {
+      lastSize: 0,
+      reading: false,
+      pending: false,
+      pendingRename: false,
+    };
 
     clientsByInstance.set(id, clients);
     pausedByInstance.set(id, paused);
@@ -68,7 +74,18 @@ export function initLogStream(
     const instanceId = id;
 
     async function processLogChanges(event: string): Promise<void> {
-      if (state.reading) return;
+      if (state.reading) {
+        // A write landed while the previous read was still draining.
+        // Dropping it meant the new lines waited for either the next fs
+        // event or the 1 s poller — and on a busy server, where reads take
+        // longest and writes come fastest, that is most of them. That delay
+        // is what the chat bridge feels as lag between someone typing in
+        // game and the message reaching Discord. Remember the event and run
+        // again the moment this pass finishes instead.
+        state.pending = true;
+        if (event === "rename") state.pendingRename = true;
+        return;
+      }
       state.reading = true;
       try {
         if (event === "rename") {
@@ -120,10 +137,21 @@ export function initLogStream(
         }
 
         state.lastSize = readEnd + 1;
+        // A-05's clamp can leave bytes behind. Ask for another pass rather
+        // than waiting out the poller for each 1 MB chunk.
+        if (readEnd + 1 < stat.size) state.pending = true;
       } catch {
         /* swallow — the next cycle retries */
       } finally {
         state.reading = false;
+        if (state.pending) {
+          state.pending = false;
+          const queued = state.pendingRename ? "rename" : "change";
+          state.pendingRename = false;
+          // Safe to re-enter: `reading` is already false, so this takes the
+          // normal path rather than recursing through the branch above.
+          void processLogChanges(queued);
+        }
       }
     }
 

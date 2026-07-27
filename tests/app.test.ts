@@ -130,6 +130,54 @@ describe("instance resolution", () => {
   });
 });
 
+describe("GET /instances/:id/health", () => {
+  // The scaffolded instance has no Minecraft server behind it, so every probe
+  // fails and this is the genuine-offline case — which is the one the route
+  // must still be able to reach, since "offline" now means something.
+  it("reports a full three-state health body", async () => {
+    const res = await app.inject({ url: "/instances/survival/health", headers: auth });
+    expect(res.statusCode).toBe(200);
+
+    const body = res.json() as {
+      state: string;
+      processUp: boolean;
+      probe: string;
+      rcon: { configured: boolean; responsive: boolean };
+      checkedAt: number;
+      ageMs: number;
+    };
+    expect(["online", "unresponsive", "offline"]).toContain(body.state);
+    expect(typeof body.processUp).toBe("boolean");
+    expect(typeof body.checkedAt).toBe("number");
+    expect(typeof body.ageMs).toBe("number");
+    expect(body.rcon).toHaveProperty("configured");
+    expect(body.rcon).toHaveProperty("responsive");
+  });
+
+  it("never reports the wrapper's own reachability as a server state", async () => {
+    // This process cannot report its own absence. A client that sees no
+    // response has to model that itself — conflating the two is the bug.
+    const res = await app.inject({ url: "/instances/survival/health", headers: auth });
+    expect(res.json()).not.toHaveProperty("state", "unreachable");
+  });
+
+  it("agrees with /running: running === (state !== offline)", async () => {
+    const health = (await app
+      .inject({ url: "/instances/survival/health", headers: auth })
+      .then((r) => r.json())) as { state: string };
+    const running = (await app
+      .inject({ url: "/instances/survival/running", headers: auth })
+      .then((r) => r.json())) as { running: boolean };
+
+    expect(running.running).toBe(health.state !== "offline");
+  });
+
+  it("requires the API key", async () => {
+    const res = await app.inject({ url: "/instances/survival/health" });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
 describe("GET /instances/:id/info (bot handshake)", () => {
   it("reports the wrapper version and host metrics", async () => {
     const res = await app.inject({ url: "/instances/survival/info", headers: auth });
