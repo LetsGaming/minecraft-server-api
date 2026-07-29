@@ -83,21 +83,64 @@ components:
       required: [pid, cpuPercent, rssBytes]
       properties:
         pid: { type: integer }
-        cpuPercent: { type: number }
-        rssBytes: { type: integer, description: Resident set size in bytes }
+        cpuPercent:
+          type: number
+          description: >
+            Instantaneous CPU share sampled from /proc/<pid>/stat, normalised
+            like top: a process saturating two cores reads 200. NOT ps's
+            lifetime average, which reported a long-idle server at ~90.
+        rssBytes:
+          type: integer
+          description: >
+            Resident set size in bytes. For a JVM this tracks committed heap
+            rather than live objects, so it sits near -Xmx.
 
-    DiskUsage:
+    HostUsage:
       type: object
-      required: [path, usedPercent, availableBytes, totalBytes]
+      required: [cpuPercent, cpuCount, memTotalBytes, memUsedBytes, uptimeSeconds]
       properties:
-        path: { type: string }
+        cpuPercent:
+          type: number
+          description: Whole-machine busy share across all cores, 0-100.
+        cpuCount: { type: integer }
+        memTotalBytes: { type: integer }
+        memUsedBytes:
+          type: integer
+          description: >
+            MemTotal - MemAvailable. Reclaimable page cache is not counted as
+            used; counting it reports a healthy machine as full.
+        uptimeSeconds: { type: integer }
+
+    FilesystemUsage:
+      type: object
+      required: [mountPoint, usedPercent, availableBytes, totalBytes]
+      properties:
+        mountPoint: { type: string, example: / }
         usedPercent: { type: number }
         availableBytes: { type: integer }
         totalBytes: { type: integer }
 
+    DiskUsage:
+      type: object
+      required: [path, sizeBytes, filesystem]
+      properties:
+        path: { type: string, description: The directory that was measured. }
+        sizeBytes:
+          type: integer
+          nullable: true
+          description: >
+            The directory's own size (du -sk). null when du timed out, which
+            a large backups tree on slow storage can do.
+        filesystem:
+          allOf: [{ $ref: "#/components/schemas/FilesystemUsage" }]
+          description: >
+            The filesystem this directory sits on. Two monitored paths on one
+            filesystem repeat the same block; the mount point is what makes
+            that readable rather than looking like two identical disks.
+
     HostInfo:
       type: object
-      required: [process, disks]
+      required: [process, host, disks]
       properties:
         process:
           nullable: true
@@ -105,10 +148,17 @@ components:
           description: >
             The biggest java process owned by the instance's linuxUser;
             null when the server is not running.
+        host:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/HostUsage" }]
+          description: >
+            The whole machine. null where /proc is unavailable (non-Linux).
         disks:
           type: array
           items: { $ref: "#/components/schemas/DiskUsage" }
-          description: df results for the server directory and the backups directory.
+          description: >
+            Per-directory usage for the server directory and the backups
+            directory, each with its filesystem.
 
     WhitelistEntry:
       type: object

@@ -184,13 +184,29 @@ describe("GET /instances/:id/info (bot handshake)", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as {
       version: string;
-      host: { process: unknown; disks: Array<{ path: string; usedPercent: number }> };
+      host: {
+        process: unknown;
+        host: { cpuPercent: number; memTotalBytes: number } | null;
+        disks: Array<{
+          path: string;
+          sizeBytes: number | null;
+          filesystem: { usedPercent: number; mountPoint: string };
+        }>;
+      };
     };
     expect(body.version).toBe(WRAPPER_VERSION);
-    // Real df in this environment — both monitored paths resolve.
+    // Real df/du in this environment — both monitored paths resolve.
     expect(body.host.disks.length).toBeGreaterThan(0);
     for (const d of body.host.disks) {
-      expect(Number.isFinite(d.usedPercent)).toBe(true);
+      expect(Number.isFinite(d.filesystem.usedPercent)).toBe(true);
+      expect(d.filesystem.mountPoint.length).toBeGreaterThan(0);
+    }
+    // Whole-machine block: present on Linux (CI and every real deployment),
+    // null elsewhere. Both are contract values the bot handles.
+    if (body.host.host) {
+      expect(body.host.host.cpuPercent).toBeGreaterThanOrEqual(0);
+      expect(body.host.host.cpuPercent).toBeLessThanOrEqual(100);
+      expect(body.host.host.memTotalBytes).toBeGreaterThan(0);
     }
     // No java process for user "minecraft" here → null, and that is a
     // valid contract value the bot handles.

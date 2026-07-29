@@ -71,9 +71,15 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "reported separately, so a loaded server is not mistaken for a stopped one.",
   },
   "host-info": {
-    version: 1,
+    // v2: process.cpuPercent is sampled instead of ps's lifetime average,
+    // a whole-machine `host` block was added, and each disk entry carries
+    // its directory's own size plus the filesystem it sits on. v1 readers
+    // lose the new fields but the old ones they read are unchanged.
+    version: 2,
     routes: ["GET /instances/:id/info"],
-    summary: "Wrapper version handshake plus host process and disk metrics.",
+    summary:
+      "Wrapper version handshake, whole-machine CPU/RAM, the server " +
+      "process's sampled CPU/RSS, and per-directory disk usage.",
   },
   whitelist: {
     version: 1,

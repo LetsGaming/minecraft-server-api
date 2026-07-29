@@ -134,19 +134,59 @@ export interface WhitelistEntry {
 
 export interface ProcessUsage {
   pid: number;
+  /**
+   * Instantaneous CPU share, sampled over a short window.
+   *
+   * NOT `ps -o pcpu`, which is the average over the process's whole
+   * lifetime: a server that worked hard during world-gen reported ~90%
+   * forever while idling. Normalised across cores the same way `top`
+   * shows it, so a fully busy 4-core box reads 400%.
+   */
   cpuPercent: number;
+  /** Resident set size. For a JVM this tracks committed heap, not live objects. */
   rssBytes: number;
 }
 
+/** Whole-machine load — what an operator means by "the server is at 14%". */
+export interface HostUsage {
+  /** Busy share across all cores, 0–100, sampled over the same window. */
+  cpuPercent: number;
+  /** Logical CPUs, so a reader can turn a per-core figure into a total. */
+  cpuCount: number;
+  memTotalBytes: number;
+  /**
+   * In-use memory, MemTotal - MemAvailable. MemAvailable (not MemFree)
+   * because reclaimable page cache is not "used" in any sense an operator
+   * cares about — counting it reports a healthy box as full.
+   */
+  memUsedBytes: number;
+  /** Seconds since boot, for context on the CPU average. */
+  uptimeSeconds: number;
+}
+
 export interface DiskUsage {
+  /** The directory that was measured. */
   path: string;
-  usedPercent: number;
-  availableBytes: number;
-  totalBytes: number;
+  /** Size of the directory's own contents (du), not of the filesystem. */
+  sizeBytes: number | null;
+  /**
+   * Filesystem the directory sits on, and its figures. Two monitored
+   * paths on one filesystem repeat the same block — that is the truth,
+   * and naming the mount point is what makes it readable instead of
+   * looking like two coincidentally identical disks.
+   */
+  filesystem: {
+    mountPoint: string;
+    usedPercent: number;
+    availableBytes: number;
+    totalBytes: number;
+  };
 }
 
 export interface HostInfo {
   process: ProcessUsage | null;
+  /** null on non-Linux hosts, where /proc is unavailable. */
+  host: HostUsage | null;
   disks: DiskUsage[];
 }
 
