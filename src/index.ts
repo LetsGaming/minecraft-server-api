@@ -2,10 +2,10 @@
  * Entry point: config resolution, SEC-01 fail-closed key check, listen,
  * graceful shutdown. App assembly lives in app.ts (testable).
  */
-import { loadConfig } from "./config.js";
-import { buildApp } from "./app.js";
-import { log } from "./logger.js";
-import { WRAPPER_VERSION } from "./version.js";
+import { loadConfig } from "./config/load.js";
+import { buildApp } from "./http/app.js";
+import { log } from "./platform/logger.js";
+import { WRAPPER_VERSION } from "./contracts/version.js";
 
 const config = loadConfig();
 
