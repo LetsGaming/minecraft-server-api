@@ -59,6 +59,11 @@ semver.
 
 ### Fixed
 
+- **`npm audit` reported a high-severity advisory** (`brace-expansion`, DoS via
+  unbounded expansion). Transitive through ESLint only, so it never reached the
+  running wrapper, but it made every CI log say "1 high severity vulnerability"
+  and that is how a real one gets ignored. Lockfile-only fix.
+
 - **`openapi.yaml` documented `scripts/run` without `rollback`, and referenced
   a `ScriptResult` schema that was never defined.** The route-coverage check in
   CI compares paths against the real router, so neither showed up there; both
