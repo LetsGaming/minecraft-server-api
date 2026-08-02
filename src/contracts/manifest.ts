@@ -126,6 +126,18 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "Listing individual archives and downloading one, addressed by an " +
       "opaque id rather than a path.",
   },
+  "mod-configs": {
+    version: 1,
+    routes: [
+      "GET /instances/:id/configs",
+      "GET /instances/:id/configs/:fileId",
+      "PUT /instances/:id/configs/:fileId",
+      "POST /instances/:id/configs/:fileId/revert",
+    ],
+    summary:
+      "Reading and writing mod config files, addressed by an opaque id " +
+      "rather than a path, with a snapshot taken before every write.",
+  },
   "backup-restore": {
     version: 1,
     routes: ["POST /instances/:id/backups/files/:fileId/restore"],

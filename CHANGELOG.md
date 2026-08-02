@@ -8,6 +8,32 @@ semver.
 
 ### Added
 
+- **Mod config file API** (`mod-configs` manifest feature, v1): index, read,
+  write and revert for mod config files.
+
+  Same addressing rule as the backup routes — no route accepts a path. Files
+  come from an allow-list of roots (`config/`, `defaultconfigs/`,
+  `world/serverconfig/`, `plugins/`, plus `server.properties`), and a client
+  gets an opaque id it can send back and nothing else.
+
+  That matters more here than for backups. Backups live in one directory with
+  one extension; configs sit inside a server directory that also holds the
+  world, the jar and `ops.json`. An editor that can reach those is a remote
+  shell with extra steps, so the allow-list is the feature. Symlinks are
+  neither followed nor listed, a realpath check backs that up, and files over
+  1 MiB are skipped.
+
+  `PUT` requires `If-Match` (428 without it, 412 on mismatch): two open editors
+  would otherwise overwrite each other, and many mods rewrite their own config
+  at shutdown. Every write snapshots the previous contents first, and the last
+  10 are revertable.
+
+  The wrapper does not parse config formats. It serves bytes and takes bytes;
+  parsing, schema derivation and the splicing writer live in the bot, because a
+  wrapper release is a deploy on every Minecraft host and TOML dialects are not
+  worth that.
+
+
 - **Individual backup archives: listing, download, and restore**
   (`backup-files` and `backup-restore` manifest features, both v1).
 

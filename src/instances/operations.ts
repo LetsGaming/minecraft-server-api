@@ -19,6 +19,7 @@ import { createHealthMonitor } from "./health.js";
 import { createBackups } from "./backups.js";
 import { createBackupFiles } from "./backupFiles.js";
 import { createRestore } from "./restore.js";
+import { createConfigFiles } from "./configFiles.js";
 import { createCommands } from "./commands.js";
 import { createLogs } from "./logs.js";
 import { createMods } from "./mods.js";
@@ -51,6 +52,7 @@ export function createOperations(cfg: InstanceConfig) {
   const backups = createBackups(cfg);
   const backupFiles = createBackupFiles(cfg);
   const restore = createRestore(cfg);
+  const configFiles = createConfigFiles(cfg);
   const scripts = createScripts(cfg);
 
   /** Full three-state health — see health.ts for why one boolean was not enough. */
@@ -81,6 +83,11 @@ export function createOperations(cfg: InstanceConfig) {
     // a flat bundle shared by ten modules.
     indexBackupFiles: backupFiles.index,
     resolveBackupFile: backupFiles.resolve,
+    indexConfigFiles: configFiles.index,
+    readConfigFile: configFiles.read,
+    writeConfigFile: configFiles.write,
+    listConfigSnapshots: configFiles.listSnapshots,
+    revertConfigFile: configFiles.revert,
     ...scripts,
     getLevelName: world.getLevelName,
     getHealth,

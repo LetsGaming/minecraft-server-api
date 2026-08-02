@@ -185,6 +185,21 @@ components:
         stderr: { type: string }
         exitCode: { type: integer, nullable: true }
 
+    ConfigFileInfo:
+      type: object
+      required: [id, relPath, modId, format, sizeBytes, mtimeMs]
+      properties:
+        id:
+          type: string
+          description: >
+            Opaque handle. The only file reference a client may send back; no
+            route here accepts a path or a filename.
+        relPath: { type: string, example: config/jei-client.toml }
+        modId: { type: string, example: jei }
+        format: { type: string, enum: [toml, json, json5, properties] }
+        sizeBytes: { type: integer }
+        mtimeMs: { type: number }
+
     BackupFileInfo:
       type: object
       required: [id, tier, name, sizeBytes, mtimeMs]
@@ -260,6 +275,13 @@ components:
         p99: { type: number }
 
   parameters:
+    ConfigFileId:
+      name: fileId
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[A-Za-z0-9_-]{22}$" }
+      description: An `id` from GET /instances/{id}/configs.
+
     BackupFileId:
       name: fileId
       in: path
@@ -676,6 +698,128 @@ paths:
           description: No such instance, or no such archive.
         "500":
           description: The restore script failed or timed out.
+
+  /instances/{id}/configs:
+    get:
+      summary: Editable mod config files
+      description: >
+        Walks an allow-list of roots (config/, defaultconfigs/,
+        world/serverconfig/, plugins/) plus server.properties. Symlinks are
+        neither followed nor listed, and files above 1 MiB are skipped.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+      responses:
+        "200":
+          description: Every editable config file on this instance.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [files]
+                properties:
+                  files:
+                    type: array
+                    items: { $ref: "#/components/schemas/ConfigFileInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/configs/{fileId}:
+    get:
+      summary: Read one config file
+      description: >
+        Returns the raw text plus an ETag. The wrapper does not parse config
+        formats — that happens in the bot, so a format quirk is fixable without
+        redeploying every game host.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - { $ref: "#/components/parameters/ConfigFileId" }
+      responses:
+        "200":
+          description: File contents, ETag, metadata and available snapshots.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [text, etag, file, snapshots]
+                properties:
+                  text: { type: string }
+                  etag: { type: string }
+                  file: { $ref: "#/components/schemas/ConfigFileInfo" }
+                  snapshots:
+                    type: array
+                    items: { type: string }
+        "400": { description: Malformed config id. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such instance, or no such file. }
+    put:
+      summary: Write one config file
+      description: >
+        Requires If-Match. Without it two open editors overwrite each other,
+        and an edit made while the server was running can land on top of a file
+        the game rewrote at shutdown. The previous contents are snapshotted
+        before the write.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - { $ref: "#/components/parameters/ConfigFileId" }
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+      responses:
+        "200":
+          description: Written.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [etag, snapshot]
+                properties:
+                  etag: { type: string }
+                  snapshot: { type: string }
+        "400": { description: Malformed config id or body. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such instance, or no such file. }
+        "412": { description: The file changed since it was loaded. }
+        "413": { description: Config file is too large. }
+        "428": { description: If-Match header is required. }
+
+  /instances/{id}/configs/{fileId}/revert:
+    post:
+      summary: Restore a config file from one of its snapshots
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - { $ref: "#/components/parameters/ConfigFileId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [snapshot]
+              properties:
+                snapshot: { type: string }
+      responses:
+        "200":
+          description: Reverted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [etag]
+                properties:
+                  etag: { type: string }
+        "400": { description: Malformed config id or body. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such instance, file or snapshot. }
 
   /instances/{id}/capabilities:
     get:
