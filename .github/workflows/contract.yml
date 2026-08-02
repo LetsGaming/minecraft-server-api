@@ -83,4 +83,9 @@ jobs:
             echo "Land the bot's half first; this job goes green once that script exists on its default branch."
             exit 1
           fi
+          # A wrapper feature the bot does not consume yet is reported as a
+          # note, not a failure: additive features are meant to land here
+          # first, and nothing calls those routes until the bot half ships.
+          # This job fails only when the bot on its default branch expects
+          # something this wrapper cannot serve.
           npm run e2e:contract
