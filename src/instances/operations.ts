@@ -17,6 +17,8 @@
 import { RconClient } from "../platform/rcon/client.js";
 import { createHealthMonitor } from "./health.js";
 import { createBackups } from "./backups.js";
+import { createBackupFiles } from "./backupFiles.js";
+import { createRestore } from "./restore.js";
 import { createCommands } from "./commands.js";
 import { createLogs } from "./logs.js";
 import { createMods } from "./mods.js";
@@ -47,6 +49,8 @@ export function createOperations(cfg: InstanceConfig) {
   const logs = createLogs(cfg);
   const mods = createMods(cfg);
   const backups = createBackups(cfg);
+  const backupFiles = createBackupFiles(cfg);
+  const restore = createRestore(cfg);
   const scripts = createScripts(cfg);
 
   /** Full three-state health — see health.ts for why one boolean was not enough. */
@@ -72,6 +76,11 @@ export function createOperations(cfg: InstanceConfig) {
     ...logs,
     ...mods,
     ...backups,
+    ...restore,
+    // Named rather than spread: `index` and `resolve` are far too generic for
+    // a flat bundle shared by ten modules.
+    indexBackupFiles: backupFiles.index,
+    resolveBackupFile: backupFiles.resolve,
     ...scripts,
     getLevelName: world.getLevelName,
     getHealth,

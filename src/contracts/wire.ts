@@ -92,12 +92,32 @@ export interface Capabilities {
     start: boolean;
     stop: boolean;
     restart: boolean;
+    /** rollback.sh — added in wrapper 3.3.0. */
+    rollback: boolean;
     backup: boolean;
     status: boolean;
   };
   backups: boolean;
+  /** backup/restore.sh — added in wrapper 3.3.0. Not a SCRIPT_MAP action. */
+  restore: boolean;
   modManifest: boolean;
   variablesFile: boolean;
+}
+
+/** One archive in the backups directory (wrapper >= 3.3.0). */
+export interface BackupFileInfo {
+  /** Opaque handle; the only file reference a client may send back. */
+  id: string;
+  tier: string;
+  name: string;
+  sizeBytes: number;
+  mtimeMs: number;
+}
+
+export interface BackupFileIndex {
+  files: BackupFileInfo[];
+  nextCursor: string | null;
+  total: number;
 }
 
 export interface ScriptResult {

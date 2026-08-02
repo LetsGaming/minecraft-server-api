@@ -177,20 +177,63 @@ components:
         latestMtimeMs: { type: number }
         latestSizeBytes: { type: integer }
 
+    ScriptResult:
+      type: object
+      required: [output, stderr, exitCode]
+      properties:
+        output: { type: string }
+        stderr: { type: string }
+        exitCode: { type: integer, nullable: true }
+
+    BackupFileInfo:
+      type: object
+      required: [id, tier, name, sizeBytes, mtimeMs]
+      properties:
+        id:
+          type: string
+          description: >
+            Opaque handle, stable across wrapper restarts. The only file
+            reference a client may send back; no route accepts a path.
+          example: 9RtQm2xK4pL0aZbY7cD1eF
+        tier: { type: string, example: archives/daily }
+        name: { type: string, example: world-2026-08-01.tar.zst }
+        sizeBytes: { type: integer }
+        mtimeMs: { type: number }
+
+    BackupFileIndex:
+      type: object
+      required: [files, nextCursor, total]
+      properties:
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/BackupFileInfo" }
+        nextCursor:
+          type: string
+          nullable: true
+          description: >
+            The id of the last item returned. Pass as `cursor` to continue.
+            An id rather than an offset, so rotation while paging cannot
+            silently skip or repeat rows.
+        total: { type: integer }
+
     Capabilities:
       type: object
-      required: [scripts, backups, modManifest, variablesFile]
+      required: [scripts, backups, restore, modManifest, variablesFile]
       properties:
         scripts:
           type: object
-          required: [start, stop, restart, backup, status]
+          required: [start, stop, restart, rollback, backup, status]
           properties:
             start: { type: boolean }
             stop: { type: boolean }
             restart: { type: boolean }
+            rollback: { type: boolean }
             backup: { type: boolean }
             status: { type: boolean }
         backups: { type: boolean }
+        restore:
+          type: boolean
+          description: backup/restore.sh exists. Not a scripts/run action.
         modManifest: { type: boolean }
         variablesFile: { type: boolean }
 
@@ -217,6 +260,13 @@ components:
         p99: { type: number }
 
   parameters:
+    BackupFileId:
+      name: fileId
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[A-Za-z0-9_-]{22}$" }
+      description: An `id` from GET /instances/{id}/backups/files.
+
     InstanceId:
       name: id
       in: path
@@ -543,6 +593,90 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/InstanceNotFound" }
 
+  /instances/{id}/backups/files:
+    get:
+      summary: Individual backup archives, newest first
+      description: >
+        Cursor-paged. Files are addressed by an opaque `id`; no route in
+        this API accepts a backup path or filename from a client.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+          description: The `nextCursor` from a previous page.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: A page of archives.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupFileIndex" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/backups/files/{fileId}/download:
+    get:
+      summary: Download one archive
+      description: >
+        Streamed, with Content-Length set so clients can show progress, and
+        Range supported so an interrupted multi-gigabyte download resumes
+        rather than restarting.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - { $ref: "#/components/parameters/BackupFileId" }
+        - name: Range
+          in: header
+          required: false
+          schema: { type: string, example: bytes=1048576- }
+      responses:
+        "200":
+          description: The whole archive.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "206":
+          description: The requested byte range.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400":
+          description: Malformed backup id.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such instance, or no such archive.
+        "416":
+          description: Range not satisfiable.
+
+  /instances/{id}/backups/files/{fileId}/restore:
+    post:
+      summary: Restore the world from one archive
+      description: >
+        Destructive and not undoable. Runs the suite's backup/restore.sh
+        against a path this wrapper resolved from the id — deliberately not a
+        scripts/run action, because that route's argument validator forbids
+        "/" so a client can never hand a path to a spawned shell.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - { $ref: "#/components/parameters/BackupFileId" }
+      responses:
+        "200":
+          description: The script's output and exit code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScriptResult" }
+        "400":
+          description: Malformed backup id.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such instance, or no such archive.
+        "500":
+          description: The restore script failed or timed out.
+
   /instances/{id}/capabilities:
     get:
       summary: Which setup-suite artifacts exist (M-13)
@@ -733,7 +867,7 @@ paths:
               properties:
                 action:
                   type: string
-                  enum: [start, stop, restart, backup, status]
+                  enum: [start, stop, restart, rollback, backup, status]
                 args:
                   type: array
                   maxItems: 5
@@ -743,13 +877,7 @@ paths:
           description: Script output after completion.
           content:
             application/json:
-              schema:
-                type: object
-                required: [output, stderr, exitCode]
-                properties:
-                  output: { type: string }
-                  stderr: { type: string }
-                  exitCode: { type: integer, nullable: true }
+              schema: { $ref: "#/components/schemas/ScriptResult" }
         "400":
           description: Missing action or args failed the allowlist.
           content:

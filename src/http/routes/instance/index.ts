@@ -6,6 +6,7 @@
  */
 import type { FastifyInstance } from "fastify";
 
+import { registerBackupFileRoutes } from "./backups.js";
 import { registerControlRoutes } from "./control.js";
 import { registerInfoRoutes } from "./info.js";
 import { registerLogRoutes } from "./logs.js";
@@ -43,4 +44,5 @@ export function registerInstanceRoutes(
   registerStatsRoutes(app, resolve);
   registerWorldRoutes(app, resolve);
   registerControlRoutes(app, resolve);
+  registerBackupFileRoutes(app, resolve);
 }

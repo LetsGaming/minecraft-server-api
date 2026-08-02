@@ -257,8 +257,16 @@ describe("getCapabilities (M-13)", () => {
     const { cfg } = scaffold();
     const ops = createOperations(cfg);
     expect(await ops.getCapabilities()).toEqual({
-      scripts: { start: false, stop: false, restart: false, backup: false, status: false },
+      scripts: {
+        start: false,
+        stop: false,
+        restart: false,
+        rollback: false,
+        backup: false,
+        status: false,
+      },
       backups: false,
+      restore: false,
       modManifest: false,
       variablesFile: false,
     });
@@ -270,7 +278,9 @@ describe("getCapabilities (M-13)", () => {
       "start.sh",
       "shutdown.sh",
       "smart_restart.sh",
+      "rollback.sh",
       "backup/backup.sh",
+      "backup/restore.sh",
       "misc/status.sh",
       "common/downloaded_versions.json",
       "common/variables.txt",
@@ -283,8 +293,16 @@ describe("getCapabilities (M-13)", () => {
     fs.mkdirSync(cfg.backupsPath);
     const ops = createOperations(cfg);
     expect(await ops.getCapabilities()).toEqual({
-      scripts: { start: true, stop: true, restart: true, backup: true, status: true },
+      scripts: {
+        start: true,
+        stop: true,
+        restart: true,
+        rollback: true,
+        backup: true,
+        status: true,
+      },
       backups: true,
+      restore: true,
       modManifest: true,
       variablesFile: true,
     });

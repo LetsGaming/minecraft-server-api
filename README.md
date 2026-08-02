@@ -1,6 +1,6 @@
 # mc-api-server
 
-Lightweight HTTP wrapper for managing Minecraft server instances — start/stop/restart, console commands, stats, logs (including a live SSE stream), whitelist, backups, host metrics — over a REST API secured with an API key.
+Lightweight HTTP wrapper for managing Minecraft server instances — start/stop/restart/rollback, console commands, stats, logs (including a live SSE stream), whitelist, backup listing/download/restore, host metrics — over a REST API secured with an API key.
 
 Intended as the remote backend for [minecraft-bot](https://github.com/LetsGaming/minecraft-bot) (one wrapper per host, any number of instances), but usable from any HTTP client. The full API is specified in [`openapi.yaml`](./openapi.yaml).
 
@@ -132,6 +132,8 @@ See [`variables.example.txt`](./variables.example.txt) for all keys. The file is
 - SSE log streams are capped at 50 concurrent clients per instance (`MC_SSE_MAX_CLIENTS` to adjust); requests beyond the cap receive 503. Slow SSE consumers are skipped while their socket is backpressured instead of buffering unboundedly.
 - Request bodies are capped at 4 KB; script arguments and stats UUIDs go through strict allowlists; console commands are stripped of control characters before reaching `screen`.
 - `500` responses carry a fixed `{ "error": "Internal server error" }` body; failure detail (paths, stderr) goes to the wrapper log only.
+- **No route accepts a filesystem path.** Backup archives are addressed by an opaque `id` handed out by `/backups/files`, which the wrapper resolves against a listing it builds itself — so the path handed to a download or a restore script is always one this process chose, never one a client described. Traversal is not defended against here; it is unrepresentable. A `realpath` containment check sits behind that for the symlink case a `startsWith` guard cannot see.
+- **`restore.sh` is deliberately not a `scripts/run` action.** Script arguments are validated against an allowlist that forbids `/`, precisely so a client cannot hand a path to a spawned shell — and restore needs an absolute path. Loosening that validator to fit would give the guard away for every script at once, so restore gets its own route and resolves the path itself.
 
 ---
 
@@ -152,7 +154,10 @@ All routes except `GET /health` require the `x-api-key` header. Error bodies are
 | `GET` | `/instances/:id/whitelist` | Whitelist entries |
 | `GET` | `/instances/:id/usercache` | **usercache.json** — every player the server has seen, filtered to `{name, uuid}` |
 | `GET` | `/instances/:id/mods` | Mod slugs from `downloaded_versions.json` (404 without a manifest) |
-| `GET` | `/instances/:id/backups` | Backup tier metadata |
+| `GET` | `/instances/:id/backups` | Backup tier metadata (counts and the newest archive per tier) |
+| `GET` | `/instances/:id/backups/files` | **Individual archives**, newest first, cursor-paged |
+| `GET` | `/instances/:id/backups/files/:fileId/download` | **Download one archive** — streamed, `Content-Length` set, `Range` supported |
+| `POST` | `/instances/:id/backups/files/:fileId/restore` | **Restore the world** from one archive (destructive) |
 | `GET` | `/instances/:id/capabilities` | Which setup-suite artifacts exist |
 | `GET` | `/instances/:id/logs/tail?lines=N` | Last N lines of `latest.log` (1–500) |
 | `GET` | `/instances/:id/logs/stream` | SSE stream of new log lines |
@@ -160,11 +165,26 @@ All routes except `GET /health` require the `x-api-key` header. Error bodies are
 | `GET` | `/instances/:id/stats/:uuid` | Stats JSON for one player |
 | `DELETE` | `/instances/:id/stats/:uuid` | Delete a player's stats file (bot `/server prune-stats`) |
 | `POST` | `/instances/:id/command` | Send a console command (RCON, screen fallback) |
-| `POST` | `/instances/:id/scripts/run` | Run a management script (`start`, `stop`, `restart`, `backup`, `status`) |
+| `POST` | `/instances/:id/scripts/run` | Run a management script (`start`, `stop`, `restart`, `rollback`, `backup`, `status`) |
 
 ### Compatibility with minecraft-bot
 
-The bot expects wrapper ≥ 1.2.0 for `/info` (version handshake, remote host metrics, disk alerts) and uses `/usercache` when available — both ship here. Older bots keep working: every 2.x route is unchanged.
+Version compatibility is negotiated, not assumed. The bot reads `GET /manifest`
+at startup, compares it against the features it knows about, and prints what is
+missing with what each gap costs. `/manifest` is generated from the real router
+and the real script map, so it cannot claim something this process does not
+serve.
+
+What that means in practice:
+
+- **Older bot, newer wrapper**: fine. New routes are additive and every 2.x and
+  3.x route is unchanged.
+- **Newer bot, older wrapper**: degrades per feature rather than failing. A bot
+  on a pre-3.3.0 wrapper hides its dashboard Backups tab and its Rollback
+  button instead of offering controls that error.
+
+The bot's dashboard wants **3.3.0** for `backup-files`, `backup-restore` and the
+`rollback` script action. Nothing else in the bot requires it.
 
 ---
 

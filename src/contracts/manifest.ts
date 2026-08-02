@@ -116,6 +116,23 @@ export const FEATURES: Record<string, FeatureSpec> = {
     routes: ["GET /instances/:id/backups"],
     summary: "Backup tier listing and sizes.",
   },
+  "backup-files": {
+    version: 1,
+    routes: [
+      "GET /instances/:id/backups/files",
+      "GET /instances/:id/backups/files/:fileId/download",
+    ],
+    summary:
+      "Listing individual archives and downloading one, addressed by an " +
+      "opaque id rather than a path.",
+  },
+  "backup-restore": {
+    version: 1,
+    routes: ["POST /instances/:id/backups/files/:fileId/restore"],
+    summary:
+      "Restoring a world from an archive. Its own feature, not a script " +
+      "action: the path is resolved here, never sent by the client.",
+  },
   "rcon-command": {
     version: 1,
     routes: ["POST /instances/:id/command"],

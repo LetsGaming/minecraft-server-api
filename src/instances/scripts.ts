@@ -12,10 +12,22 @@ import { spawn } from "child_process";
 import type { InstanceConfig } from "../config/types.js";
 import type { Capabilities, ScriptResult } from "../contracts/wire.js";
 
+/**
+ * The restore script, deliberately outside SCRIPT_MAP.
+ *
+ * Everything in SCRIPT_MAP is reachable through POST /scripts/run, whose args
+ * are validated by SAFE_ARG — which forbids "/" so a client cannot inject a
+ * path. Restore needs an absolute path, so it can never come from a client
+ * and gets its own route that resolves the file itself (routes/instance/
+ * backups.ts). Naming it here keeps the capability probe in one place.
+ */
+export const RESTORE_SCRIPT = "backup/restore.sh";
+
 export const SCRIPT_MAP: Record<string, string> = {
   start: "start.sh",
   stop: "shutdown.sh",
   restart: "smart_restart.sh",
+  rollback: "rollback.sh",
   backup: "backup/backup.sh",
   status: "misc/status.sh",
 };
@@ -24,7 +36,14 @@ const SCRIPT_TIMEOUTS: Record<string, number> = {
   start: 30_000,
   stop: 60_000,
   restart: 60_000,
-  backup: 300_000,
+  rollback: 300_000,
+  // 600s, not 300s. A large modded world takes longer than five minutes to
+  // archive, and the timeout does not just give up: it SIGTERMs the process
+  // group, so the backup script dies partway through and leaves a truncated
+  // archive where a good one should be. The old panel allowed ten minutes for
+  // the same script; matching it is the conservative choice, not the generous
+  // one.
+  backup: 600_000,
   status: 15_000,
 };
 
@@ -51,20 +70,37 @@ async function getCapabilities(): Promise<Capabilities> {
     !!cfg.scriptsDir && (await exists(path.join(cfg.scriptsDir, rel)));
   // Independent probes, so run them together rather than serially — this
   // is up to eight stat() calls on a disk the server may be hammering.
-  const [start, stop, restart, backup, status, backups, modManifest, variablesFile] =
-    await Promise.all([
+  const [
+    start,
+    stop,
+    restart,
+    rollback,
+    backup,
+    restore,
+    status,
+    backups,
+    modManifest,
+    variablesFile,
+  ] = await Promise.all([
       scriptExists(SCRIPT_MAP.start!),
       scriptExists(SCRIPT_MAP.stop!),
       scriptExists(SCRIPT_MAP.restart!),
+      scriptExists(SCRIPT_MAP.rollback!),
       scriptExists(SCRIPT_MAP.backup!),
+      // Not in SCRIPT_MAP: restore takes a resolved path, so it is never
+      // spawned through the generic /scripts/run allowlist. Probed here
+      // anyway, because the dashboard needs to know whether to show the
+      // button (see restore.ts).
+      scriptExists(RESTORE_SCRIPT),
       scriptExists(SCRIPT_MAP.status!),
       cfg.backupsPath ? exists(cfg.backupsPath) : Promise.resolve(false),
       scriptExists(path.join("common", "downloaded_versions.json")),
       scriptExists(path.join("common", "variables.txt")),
     ]);
   return {
-    scripts: { start, stop, restart, backup, status },
+    scripts: { start, stop, restart, rollback, backup, status },
     backups,
+    restore,
     modManifest,
     variablesFile,
   };

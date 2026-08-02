@@ -8,6 +8,62 @@ semver.
 
 ### Added
 
+- **Individual backup archives: listing, download, and restore**
+  (`backup-files` and `backup-restore` manifest features, both v1).
+
+  `GET /backups` only ever answered "how big is each tier". Everything that
+  needed a *file* — downloading one, restoring from one — had to be done over
+  SSH or from the old web panel, which is the last thing keeping that panel
+  installed.
+
+  Three routes: `GET /backups/files` (cursor-paged, newest first),
+  `GET /backups/files/:fileId/download`, and
+  `POST /backups/files/:fileId/restore`.
+
+  **No route accepts a path.** Clients get an opaque `id` from the index and
+  can send nothing else back. The obvious design — a filename plus a
+  `resolve` + `startsWith` guard — is a check that has to be written correctly
+  every time, and it does not catch a symlink planted inside a tier anyway.
+  Addressing by handle means the path is one this wrapper chose, so traversal
+  is not defended against, it is unrepresentable. A `realpath` containment
+  check sits behind that for the symlink case.
+
+  The id is derived from the instance id and the archive's relative path, so it
+  survives a restart (a download URL keeps working across a redeploy) and an id
+  from one instance cannot resolve against another's backups directory.
+
+  Downloads stream with `Content-Length` set and support `Range`: these
+  archives run to gigabytes, and without ranges an interrupted download starts
+  over.
+
+  Restore is deliberately **not** a `scripts/run` action. That route validates
+  every argument against `SAFE_ARG`, which forbids `/` precisely so a client
+  cannot hand a path to a spawned shell — and `restore.sh` needs an absolute
+  path. Loosening the validator to fit would give the guard away for every
+  script at once, so restore gets its own route and resolves the path itself.
+
+- **`rollback` is a runnable script action.** `rollback.sh` joins `SCRIPT_MAP`
+  with a 300s timeout, and the capability probe reports whether it exists.
+
+- **`capabilities` gained `scripts.rollback` and `restore`.** Additive; a
+  client reading the old fields is unaffected.
+
+### Changed
+
+- **The backup timeout is 600s, was 300s.** A large modded world takes longer
+  than five minutes to archive, and the timeout does not merely give up: it
+  SIGTERMs the process group, so `backup.sh` dies partway through and leaves a
+  truncated archive where a good one should be. Ten minutes is what the old
+  panel allowed for the same script, so this is the conservative value rather
+  than a generous one.
+
+### Fixed
+
+- **`openapi.yaml` documented `scripts/run` without `rollback`, and referenced
+  a `ScriptResult` schema that was never defined.** The route-coverage check in
+  CI compares paths against the real router, so neither showed up there; both
+  are now correct, and `ScriptResult` is defined once and shared.
+
 - **`GET /instances/:id/health` — liveness and responsiveness, reported
   separately** (`server-health` manifest feature, v1).
 
@@ -37,7 +93,6 @@ semver.
   telling it the port while we still can is what makes that work without the
   operator configuring the same thing twice.
 
-### Changed
 
 - **`/running` is now process liveness, not an RCON probe.** `running` is
   `state !== "offline"`, so a loaded server stops reporting itself stopped
@@ -63,7 +118,6 @@ semver.
   five tiers of thousands of archives blocked *every* concurrent request,
   `/health` included. The backup tiers are also scanned in parallel now.
 
-### Fixed
 
 - **The log stream dropped filesystem events that arrived mid-read.**
   `processLogChanges` returned early when a read was already draining, so

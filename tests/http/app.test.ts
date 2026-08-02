@@ -281,6 +281,7 @@ describe("file-backed routes", () => {
     expect(Object.keys(caps.scripts).sort()).toEqual([
       "backup",
       "restart",
+      "rollback",
       "start",
       "status",
       "stop",
