@@ -698,6 +698,30 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/InstanceNotFound" }
 
+  /instances/{id}/mods/{slug}/update:
+    post:
+      summary: Update one installed mod to its latest compatible build (mod-management)
+      description: Runs update-mod.js as the instance user for a single slug.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The update script's structured outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModActionResult" }
+        "400":
+          description: Invalid slug.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
   /instances/{id}/mods/updates:
     get:
       summary: Check installed mods for updates (mod-management)

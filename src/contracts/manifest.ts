@@ -117,6 +117,7 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "GET /instances/:id/mods/installed",
       "POST /instances/:id/mods",
       "DELETE /instances/:id/mods/:slug",
+      "POST /instances/:id/mods/:slug/update",
       "GET /instances/:id/mods/updates",
       "POST /instances/:id/mods/updates",
     ],

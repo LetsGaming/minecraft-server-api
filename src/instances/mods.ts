@@ -38,6 +38,7 @@ const SCRIPTS = {
   remove: "update/remove-mod.js",
   check: "update/check-updates.js",
   apply: "update/update-mods.js",
+  updateOne: "update/update-mod.js",
 } as const;
 
 /**
@@ -50,6 +51,7 @@ const SCRIPT_TIMEOUTS: Record<keyof typeof SCRIPTS, number> = {
   remove: 30_000,
   check: 120_000,
   apply: 600_000,
+  updateOne: 120_000,
 };
 
 /** A slug or project id, as recorded in downloaded_versions.json. */
@@ -231,6 +233,13 @@ export function createMods(cfg: InstanceConfig) {
     return parsed as ModApplyResult;
   }
 
+  /** Update a single installed mod to its latest compatible build. */
+  async function updateMod(slug: string): Promise<ModApplyResult> {
+    const parsed = await runModScript("updateOne", [slug], "Update mod");
+    assertOkField(parsed, "Update mod");
+    return parsed as ModApplyResult;
+  }
+
   return {
     getModSlugs,
     listInstalled,
@@ -238,6 +247,7 @@ export function createMods(cfg: InstanceConfig) {
     removeMod,
     checkUpdates,
     applyUpdates,
+    updateMod,
   };
 }
 

@@ -130,6 +130,22 @@ export function registerModRoutes(
     },
   );
 
+  app.post<{ Params: InstanceParams & { slug: string } }>(
+    `${P}/mods/:slug/update`,
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      if (!SLUG_RE.test(req.params.slug)) {
+        return reply.status(400).send({ error: "Invalid mod slug" });
+      }
+      try {
+        return await entry.updateMod(req.params.slug);
+      } catch (err) {
+        return internalError(reply, `mods/update ${req.params.id}`, err);
+      }
+    },
+  );
+
   app.post<{ Params: InstanceParams; Body: { mcVersion?: unknown } }>(
     `${P}/mods/updates`,
     async (req, reply) => {
