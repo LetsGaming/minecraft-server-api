@@ -33,6 +33,20 @@ components:
         error:
           type: string
 
+    ModActionResult:
+      type: object
+      description: >
+        The structured result of a mod add/remove/apply script. `ok` is the
+        only guaranteed field; the rest depend on the operation. A handled
+        failure is { ok: false, error, code }; a success carries the operation's
+        own fields (action, dependencies, updated, orphanedDependencies, ...).
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        error: { type: string }
+        code: { type: string }
+      additionalProperties: true
+
     InstanceHealth:
       type: object
       description: >
@@ -592,6 +606,154 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+    post:
+      summary: Install a mod from Modrinth (mod-management)
+      description: >
+        Runs the suite's add-mod.js as the instance user. mcVersion and
+        modLoader fall back to downloaded_versions.json when omitted. Required
+        dependencies are pulled automatically. Returns the script's structured
+        result; a handled failure arrives as { ok: false, error, code } at 200.
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug: { type: string, description: Modrinth slug or project id }
+                mcVersion: { type: string }
+                modLoader: { type: string }
+      responses:
+        "200":
+          description: The add script's structured outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModActionResult" }
+        "400":
+          description: Invalid or missing slug / mcVersion / modLoader.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/mods/installed:
+    get:
+      summary: The richer installed mod list (mod-management)
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: Installed mods with version ids and filenames, plus loader and game version.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [gameVersion, modLoader, mtimeMs, mods]
+                properties:
+                  gameVersion: { type: string, nullable: true }
+                  modLoader: { type: string, nullable: true }
+                  mtimeMs: { type: number }
+                  mods:
+                    type: array
+                    items:
+                      type: object
+                      required: [slug, versionId, filename]
+                      properties:
+                        slug: { type: string }
+                        versionId: { type: string, nullable: true }
+                        filename: { type: string, nullable: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Instance unknown, or no mod manifest exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /instances/{id}/mods/{slug}:
+    delete:
+      summary: Remove an installed mod (mod-management)
+      description: >
+        Runs the suite's remove-mod.js as the instance user. Deletes the
+        recorded jar and its downloaded_versions.json entry, and reports any
+        now-orphaned required dependencies without removing them.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The remove script's structured outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModActionResult" }
+        "400":
+          description: Invalid slug.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/mods/updates:
+    get:
+      summary: Check installed mods for updates (mod-management)
+      description: Runs check-updates.js --json; one result per installed mod.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - name: mcVersion
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Per-mod update status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mcVersion, modLoader, results]
+                properties:
+                  mcVersion: { type: string }
+                  modLoader: { type: string }
+                  results:
+                    type: array
+                    items: { type: object }
+        "400":
+          description: Invalid mcVersion.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+    post:
+      summary: Apply all available mod updates (mod-management)
+      description: Runs update-mods.js as the instance user, downloading each update.
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mcVersion: { type: string }
+      responses:
+        "200":
+          description: What was updated, what was already current, and what failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModActionResult" }
+        "400":
+          description: Invalid mcVersion.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
 
   /instances/{id}/backups:
     get:

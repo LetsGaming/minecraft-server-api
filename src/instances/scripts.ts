@@ -7,8 +7,8 @@
  */
 import fsp from "fs/promises";
 import path from "path";
-import { spawn } from "child_process";
 
+import { runAsInstanceUser } from "../platform/spawn.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { Capabilities, ScriptResult } from "../contracts/wire.js";
 
@@ -116,73 +116,12 @@ async function runScript(action: string, args?: string[]): Promise<ScriptResult>
 
   const timeoutMs = SCRIPT_TIMEOUTS[action] ?? 120_000;
 
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      "sudo",
-      ["-n", "-u", cfg.linuxUser, "bash", scriptPath, ...(args ?? [])],
-      {
-        cwd: cfg.scriptsDir,
-        env: { ...process.env, HOME: `/home/${cfg.linuxUser}` },
-        stdio: ["ignore", "pipe", "pipe"],
-        // BUG-01: process-group leader so the A-02 group kill below
-        // (process.kill(-child.pid)) actually targets a real group.
-        detached: true,
-      },
-    );
-
-    let stdout = "";
-    let stderr = "";
-    let killed = false;
-
-    const timer = setTimeout(() => {
-      killed = true;
-      // A-02: kill the process group so the actual script (already forked
-      // as LINUX_USER by sudo) also receives SIGTERM.
-      try {
-        process.kill(-child.pid!, "SIGTERM");
-      } catch {
-        child.kill("SIGTERM");
-      }
-      reject(
-        new Error(
-          `Script timed out after ${timeoutMs / 1000}s\n\nOutput:\n${stdout.slice(-500)}`,
-        ),
-      );
-    }, timeoutMs);
-
-    child.stdout.on("data", (d: Buffer) => {
-      stdout += d.toString();
-    });
-    child.stderr.on("data", (d: Buffer) => {
-      stderr += d.toString();
-    });
-
-    child.on("close", (code) => {
-      if (killed) return;
-      clearTimeout(timer);
-
-      if (/\[SUDO ERROR\]/i.test(`${stdout}\n${stderr}`)) {
-        reject(
-          new Error(
-            `Sudo not configured for '${cfg.linuxUser}'. See docs/sudoers-setup.md.`,
-          ),
-        );
-        return;
-      }
-
-      stderr = stderr
-        .split("\n")
-        .filter((l) => !l.includes("[sudo]") && !l.includes("password for"))
-        .join("\n")
-        .trim();
-
-      resolve({ output: stdout.trim(), stderr, exitCode: code });
-    });
-
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      reject(new Error(`Failed to start script: ${err.message}`));
-    });
+  // The spawn dance (process-group leader, group-kill timeout, sudoers
+  // detection, [sudo] filtering) lives in platform/spawn.ts, shared with the
+  // restore and mod runners so the security-relevant details cannot drift.
+  return runAsInstanceUser(cfg, ["bash", scriptPath, ...(args ?? [])], {
+    timeoutMs,
+    label: "Script",
   });
 }
 

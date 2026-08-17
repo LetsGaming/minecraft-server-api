@@ -126,6 +126,79 @@ export interface ScriptResult {
   exitCode: number | null;
 }
 
+// ── Mod management (the `mod-management` feature) ──────────────────────────
+
+/** One entry from downloaded_versions.json, in its current object form. */
+export interface InstalledMod {
+  slug: string;
+  /** null on a legacy entry that recorded no version id. */
+  versionId: string | null;
+  /** null when the installed jar's filename was never captured. */
+  filename: string | null;
+}
+
+/** The richer installed list the dashboard reads (vs. the bot's slug-only /mods). */
+export interface InstalledMods {
+  gameVersion: string | null;
+  modLoader: string | null;
+  /** mtime of downloaded_versions.json, so a client can cache on it. */
+  mtimeMs: number;
+  mods: InstalledMod[];
+}
+
+/**
+ * The results the suite scripts emit in --json mode. Their `ok` flag is the
+ * contract this wrapper relies on; the rest is passed through to the client,
+ * which renders the human summary. A script's own handled failure arrives as
+ * `{ ok: false, error, code }` rather than as an HTTP 500.
+ */
+export interface ModAddResult {
+  ok: boolean;
+  slug?: string;
+  projectId?: string;
+  /** added | already-present | filename-updated */
+  action?: string;
+  versionId?: string;
+  filename?: string;
+  dependencies?: Array<{ slug: string; action: string }>;
+  error?: string;
+  code?: string;
+}
+
+export interface ModRemoveResult {
+  ok: boolean;
+  slug?: string;
+  removedFile?: string | null;
+  /**
+   * Required dependencies of the removed mod that nothing else depends on.
+   * Reported, never auto-removed — the operator decides.
+   */
+  orphanedDependencies?: string[];
+  error?: string;
+  code?: string;
+}
+
+/** The output of check-updates.js --json, passed through verbatim. */
+export interface ModUpdateCheck {
+  mcVersion: string;
+  modLoader: string;
+  results: Array<{ slug: string; status: string; [key: string]: unknown }>;
+}
+
+export interface ModApplyResult {
+  ok: boolean;
+  updated?: Array<{
+    slug: string;
+    fromVersionId?: string | null;
+    toVersionId: string;
+    filename: string;
+  }>;
+  upToDate?: string[];
+  failed?: Array<{ slug: string; error: string }>;
+  error?: string;
+  code?: string;
+}
+
 export interface WhitelistEntry {
   name: string;
   uuid: string;

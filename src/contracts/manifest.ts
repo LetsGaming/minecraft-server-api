@@ -111,6 +111,19 @@ export const FEATURES: Record<string, FeatureSpec> = {
     routes: ["GET /instances/:id/mods"],
     summary: "The suite's downloaded_versions.json mod manifest.",
   },
+  "mod-management": {
+    version: 1,
+    routes: [
+      "GET /instances/:id/mods/installed",
+      "POST /instances/:id/mods",
+      "DELETE /instances/:id/mods/:slug",
+      "GET /instances/:id/mods/updates",
+      "POST /instances/:id/mods/updates",
+    ],
+    summary:
+      "Installing, removing and updating mods by driving the suite's " +
+      "scripts/update/*.js as the instance user, plus a richer installed list.",
+  },
   backups: {
     version: 1,
     routes: ["GET /instances/:id/backups"],

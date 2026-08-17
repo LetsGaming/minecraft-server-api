@@ -1,6 +1,7 @@
 /**
- * What is deployed on disk for this instance: the world's name, its mod
- * manifest and its backup inventory.
+ * What is deployed on disk for this instance: the world's name and its backup
+ * inventory. The mod manifest moved to its own group (routes/instance/mods.ts)
+ * when mod management grew past a single read-only route.
  */
 import type { FastifyInstance } from "fastify";
 
@@ -22,21 +23,6 @@ export function registerWorldRoutes(
       return { levelName: await entry.getLevelName() };
     } catch (err) {
       return internalError(reply, `level-name ${req.params.id}`, err);
-    }
-  });
-
-  app.get<{ Params: InstanceParams }>(`${P}/mods`, async (req, reply) => {
-    const entry = resolve(req.params.id, reply);
-    if (!entry) return;
-    // F-008: null means file not found → 404
-    try {
-      const result = await entry.getModSlugs();
-      if (result === null) {
-        return reply.status(404).send({ error: "Mod list not found" });
-      }
-      return result;
-    } catch (err) {
-      return internalError(reply, `mods ${req.params.id}`, err);
     }
   });
 
