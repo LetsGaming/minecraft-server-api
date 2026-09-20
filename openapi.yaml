@@ -610,7 +610,9 @@ paths:
       summary: Install a mod from Modrinth (mod-management)
       description: >
         Runs the suite's add-mod.js as the instance user. mcVersion and
-        modLoader fall back to downloaded_versions.json when omitted. Required
+        modLoader fall back to downloaded_versions.json when omitted, unless
+        versionId is given, which pins the install to that exact Modrinth
+        build instead of resolving the newest compatible one. Required
         dependencies are pulled automatically. Returns the script's structured
         result; a handled failure arrives as { ok: false, error, code } at 200.
       parameters: [{ $ref: "#/components/parameters/InstanceId" }]
@@ -625,6 +627,7 @@ paths:
                 slug: { type: string, description: Modrinth slug or project id }
                 mcVersion: { type: string }
                 modLoader: { type: string }
+                versionId: { type: string, description: Pin to this exact Modrinth version build }
       responses:
         "200":
           description: The add script's structured outcome.
@@ -632,7 +635,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ModActionResult" }
         "400":
-          description: Invalid or missing slug / mcVersion / modLoader.
+          description: Invalid or missing slug / mcVersion / modLoader / versionId.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

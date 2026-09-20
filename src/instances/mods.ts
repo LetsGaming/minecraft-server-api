@@ -60,6 +60,8 @@ const SLUG_RE = /^[\w.-]{1,96}$/;
 const MC_VERSION_RE = /^[\w.-]{1,20}$/;
 /** A loader like fabric, forge, quilt, neoforge. */
 const LOADER_RE = /^[a-z]{1,20}$/;
+/** A Modrinth version id, e.g. "AbCdEfGh". */
+const VERSION_ID_RE = /^[\w-]{1,32}$/;
 
 export function createMods(cfg: InstanceConfig) {
   const manifestPath = path.join(
@@ -196,10 +198,12 @@ export function createMods(cfg: InstanceConfig) {
     slug: string,
     mcVersion?: string,
     modLoader?: string,
+    versionId?: string,
   ): Promise<ModAddResult> {
     const args = [slug];
     if (mcVersion) args.push(`--mcVersion=${mcVersion}`);
     if (modLoader) args.push(`--modLoader=${modLoader}`);
+    if (versionId) args.push(`--versionId=${versionId}`);
     const parsed = await runModScript("add", args, "Add mod");
     assertOkField(parsed, "Add mod");
     return parsed as ModAddResult;
@@ -253,4 +257,9 @@ export function createMods(cfg: InstanceConfig) {
 
 // Exported so the route validates inputs against the same patterns the module
 // trusts — a bad slug is a 400 at the boundary rather than a spawn.
-export const MOD_VALIDATION = { SLUG_RE, MC_VERSION_RE, LOADER_RE } as const;
+export const MOD_VALIDATION = {
+  SLUG_RE,
+  MC_VERSION_RE,
+  LOADER_RE,
+  VERSION_ID_RE,
+} as const;

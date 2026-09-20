@@ -26,7 +26,7 @@ import {
   type ResolveInstance,
 } from "./shared.js";
 
-const { SLUG_RE, MC_VERSION_RE, LOADER_RE } = MOD_VALIDATION;
+const { SLUG_RE, MC_VERSION_RE, LOADER_RE, VERSION_ID_RE } = MOD_VALIDATION;
 
 export function registerModRoutes(
   app: FastifyInstance,
@@ -68,7 +68,12 @@ export function registerModRoutes(
 
   app.post<{
     Params: InstanceParams;
-    Body: { slug?: unknown; mcVersion?: unknown; modLoader?: unknown };
+    Body: {
+      slug?: unknown;
+      mcVersion?: unknown;
+      modLoader?: unknown;
+      versionId?: unknown;
+    };
   }>(`${P}/mods`, async (req, reply) => {
     const entry = resolve(req.params.id, reply);
     if (!entry) return;
@@ -85,12 +90,17 @@ export function registerModRoutes(
     if (modLoader !== undefined && (typeof modLoader !== "string" || !LOADER_RE.test(modLoader))) {
       return reply.status(400).send({ error: "Invalid modLoader" });
     }
+    const versionId = req.body?.versionId;
+    if (versionId !== undefined && (typeof versionId !== "string" || !VERSION_ID_RE.test(versionId))) {
+      return reply.status(400).send({ error: "Invalid versionId" });
+    }
 
     try {
       return await entry.addMod(
         slug,
         mcVersion as string | undefined,
         modLoader as string | undefined,
+        versionId as string | undefined,
       );
     } catch (err) {
       return internalError(reply, `mods/add ${req.params.id}`, err);
