@@ -108,6 +108,40 @@ export function tcpProbe(
   });
 }
 
+/**
+ * Ask systemd how many times this instance's unit has restarted and whether
+ * it has given up (StartLimitBurst tripped — see create_service.sh). This is
+ * the only way to tell "the server is down" from "the server keeps crashing
+ * and restarting" — a crash loop can be briefly up between attempts, which
+ * looks identical to a clean outage on every other probe here.
+ *
+ * Best-effort like screenSessionExists: a missing sudoers grant or a
+ * platform without systemd must not fail the health probe, just omit this.
+ */
+export async function probeRestartState(
+  cfg: InstanceConfig,
+): Promise<{ restartCount: number; unitFailed: boolean }> {
+  const { stdout, ok } = await execSafe(
+    "sudo",
+    [
+      "-n",
+      "systemctl",
+      "show",
+      `${cfg.id}.service`,
+      "-p",
+      "NRestarts,ActiveState",
+      "--value",
+    ],
+    5_000,
+  );
+  if (!ok) return { restartCount: 0, unitFailed: false };
+  const [nRestarts, activeState] = stdout.trim().split("\n");
+  return {
+    restartCount: parseInt(nRestarts ?? "", 10) || 0,
+    unitFailed: activeState === "failed",
+  };
+}
+
 /** Is there a screen session named after this instance? */
 export async function screenSessionExists(cfg: InstanceConfig): Promise<boolean> {
   const { stdout, ok } = await execSafe(
@@ -197,11 +231,16 @@ export function createHealthMonitor(
     }
 
     // RCON answering is itself proof the process is up, so the OS probes only
-    // run when it did not.
+    // run when it did not. Same gate for the systemd restart state: a
+    // healthy, RCON-responsive server has nothing interesting to report here,
+    // and it's a sudo subprocess spawn on every poll we don't need to pay for.
     const usedProbe: ProcessProbe = rconResponsive
       ? "rcon"
       : await probeProcess(cfg);
     const processUp = usedProbe !== "none";
+    const restartState = rconResponsive
+      ? { restartCount: 0, unitFailed: false }
+      : await probeRestartState(cfg);
 
     // Published so a client can ping the game server directly when this
     // wrapper stops answering — see types.ts. Never fails the probe: a
@@ -230,6 +269,8 @@ export function createHealthMonitor(
               : null,
         },
         gamePort,
+        restartCount: restartState.restartCount,
+        unitFailed: restartState.unitFailed,
         checkedAt: startedAt,
         ageMs: 0,
       },

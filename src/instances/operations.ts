@@ -83,6 +83,7 @@ export function createOperations(cfg: InstanceConfig) {
     // a flat bundle shared by ten modules.
     indexBackupFiles: backupFiles.index,
     resolveBackupFile: backupFiles.resolve,
+    deleteBackupFile: backupFiles.remove,
     indexConfigFiles: configFiles.index,
     readConfigFile: configFiles.read,
     writeConfigFile: configFiles.write,

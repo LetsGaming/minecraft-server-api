@@ -382,3 +382,85 @@ describe("POST /backups/files/:fileId/restore", () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+// ── Delete ──────────────────────────────────────────────────────────────────
+// Its own archives, written fresh here rather than reusing the shared fixture
+// — the index/download/restore tests above hard-code `total: 3` and specific
+// filenames, and deleting one of those would break them out from under this
+// block's declaration order.
+
+describe("DELETE /backups/files/:fileId", () => {
+  it("deletes the archive; it's gone from disk and from the index", async () => {
+    writeArchive("hourly", "delete-me.tar.zst", 256, 5_000_000);
+    const before = await index();
+    const file = before.files.find((f) => f.name === "delete-me.tar.zst")!;
+    expect(file).toBeDefined();
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/instances/smp/backups/files/${file.id}`,
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      ok: true,
+      name: "delete-me.tar.zst",
+      tier: "hourly",
+      sizeBytes: 256,
+    });
+
+    const after = await index();
+    expect(after.files.some((f) => f.name === "delete-me.tar.zst")).toBe(false);
+    expect(fs.existsSync(path.join(backupsPath, "hourly", "delete-me.tar.zst"))).toBe(false);
+  });
+
+  it("400s a malformed id before touching the filesystem", async () => {
+    const res = await app.inject({
+      method: "DELETE",
+      url: "/instances/smp/backups/files/nope",
+      headers: auth,
+    });
+    expect([400, 404]).toContain(res.statusCode);
+  });
+
+  it("404s a well-formed id that names nothing", async () => {
+    const res = await app.inject({
+      method: "DELETE",
+      url: "/instances/smp/backups/files/AAAAAAAAAAAAAAAAAAAAAA",
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("404s an id that resolves for a different instance (scoped, like resolve/download)", async () => {
+    writeArchive("hourly", "cross-instance.tar.zst", 128, 6_000_000);
+    const otherIndex = await createBackupFiles({ ...instanceCfg, id: "creative" }).index(
+      undefined,
+      50,
+    );
+    const crossId = otherIndex.files.find((f) => f.name === "cross-instance.tar.zst")!.id;
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/instances/smp/backups/files/${crossId}`,
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(404);
+
+    // Still there — the wrong-instance id must not have deleted it.
+    expect(fs.existsSync(path.join(backupsPath, "hourly", "cross-instance.tar.zst"))).toBe(true);
+  });
+
+  it("401s without the key, and does not delete the file", async () => {
+    writeArchive("hourly", "auth-check.tar.zst", 64, 7_000_000);
+    const body = await index();
+    const file = body.files.find((f) => f.name === "auth-check.tar.zst")!;
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/instances/smp/backups/files/${file.id}`,
+    });
+    expect(res.statusCode).toBe(401);
+    expect(fs.existsSync(path.join(backupsPath, "hourly", "auth-check.tar.zst"))).toBe(true);
+  });
+});

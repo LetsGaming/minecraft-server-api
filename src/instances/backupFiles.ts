@@ -189,5 +189,20 @@ export function createBackupFiles(cfg: InstanceConfig) {
     }
   }
 
-  return { index, resolve };
+  /**
+   * Delete one archive, resolved through the same `resolve()` every other
+   * operation uses — no second path-building path to keep in sync, and it
+   * inherits both guards (id must come from an index this module built;
+   * realpath must still sit inside the backups directory) for free.
+   * Returns the deleted file's info, or null when the id is unknown (already
+   * rotated away, or belongs to a different instance).
+   */
+  async function remove(id: string): Promise<BackupFileInfo | null> {
+    const found = await resolve(id);
+    if (!found) return null;
+    await fsp.unlink(found.absPath);
+    return found.info;
+  }
+
+  return { index, resolve, remove };
 }

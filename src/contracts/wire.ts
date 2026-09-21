@@ -14,7 +14,7 @@ export interface PlayerList {
   players: string[];
 }
 
-// ── Health (the `server-health` manifest feature, v1) ─────────────────────
+// ── Health (the `server-health` manifest feature, v2) ─────────────────────
 
 /**
  * What the Minecraft server is doing. Note what is *not* here: "the wrapper
@@ -48,6 +48,17 @@ export interface InstanceHealth {
    * the operator to configure it twice.
    */
   gamePort: number | null;
+  /**
+   * v2: how many times systemd has restarted this unit (NRestarts), and
+   * whether it has given up (StartLimitBurst tripped — see
+   * create_service.sh). This is the only signal that distinguishes a crash
+   * loop from a clean outage: both look identical to every probe above,
+   * since a looping server can be briefly up between attempts. Always
+   * `{restartCount: 0, unitFailed: false}` when the server answered RCON
+   * (nothing to report) or when systemd/sudo isn't available to ask.
+   */
+  restartCount: number;
+  unitFailed: boolean;
   /** When the underlying probe ran (epoch ms). */
   checkedAt: number;
   /** Age of the served snapshot. Non-zero is normal and expected under load. */
@@ -135,6 +146,23 @@ export interface InstalledMod {
   versionId: string | null;
   /** null when the installed jar's filename was never captured. */
   filename: string | null;
+  /**
+   * Whether the jar is in mods/ (true) or mods/disabled/ (false) — derived
+   * from disk location, not a manifest field, so it can't drift from
+   * reality. True when the jar couldn't be located at all (nothing to
+   * disable), matching the pre-existing default of "installed = active".
+   */
+  enabled: boolean;
+}
+
+export interface ModToggleResult {
+  ok: boolean;
+  slug?: string;
+  filename?: string | null;
+  alreadyEnabled?: boolean;
+  alreadyDisabled?: boolean;
+  error?: string;
+  code?: string;
 }
 
 /** The richer installed list the dashboard reads (vs. the bot's slug-only /mods). */

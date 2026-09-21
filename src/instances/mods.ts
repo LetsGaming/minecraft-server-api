@@ -31,6 +31,7 @@ import type {
   ModRemoveResult,
   ModUpdateCheck,
   ModApplyResult,
+  ModToggleResult,
 } from "../contracts/wire.js";
 
 const SCRIPTS = {
@@ -39,6 +40,7 @@ const SCRIPTS = {
   check: "update/check-updates.js",
   apply: "update/update-mods.js",
   updateOne: "update/update-mod.js",
+  toggle: "update/toggle-mod.js",
 } as const;
 
 /**
@@ -52,6 +54,7 @@ const SCRIPT_TIMEOUTS: Record<keyof typeof SCRIPTS, number> = {
   check: 120_000,
   apply: 600_000,
   updateOne: 120_000,
+  toggle: 15_000,
 };
 
 /** A slug or project id, as recorded in downloaded_versions.json. */
@@ -119,28 +122,49 @@ export function createMods(cfg: InstanceConfig) {
   }
 
   /**
-   * The slug-only reader the bot's /mods route still uses. Kept exactly as it
-   * was — its shape is the `mods` v1 feature contract the bot casts to.
+   * The slug-only reader the bot's /mods command uses to tell players what to
+   * install client-side. Excludes disabled mods — they aren't active on the
+   * running server, so listing them would tell a player to install something
+   * for a feature that currently doesn't exist. Kept otherwise as it was —
+   * its shape is the `mods` v1 feature contract the bot casts to.
    */
   async function getModSlugs(): Promise<{ slugs: string[]; mtimeMs: number } | null> {
     const manifest = await readManifest();
     if (!manifest) return null;
-    return { slugs: Object.keys(manifest.data.mods), mtimeMs: manifest.mtimeMs };
+    const slugs: string[] = [];
+    for (const [slug, entry] of Object.entries(manifest.data.mods)) {
+      const filename = typeof entry === "string" ? null : (entry.filename ?? null);
+      if (await isEnabled(filename)) slugs.push(slug);
+    }
+    return { slugs, mtimeMs: manifest.mtimeMs };
+  }
+
+  /**
+   * Whether a mod's jar currently sits in mods/ (enabled) or mods/disabled/
+   * (disabled) — the on-disk location IS the enabled state (see
+   * toggle-mod.js). A legacy entry with no recorded filename can't be
+   * cheaply checked here without duplicating the scripts' slug-scan
+   * fallback, so it defaults to enabled — matching "installed = active",
+   * the behavior before this feature existed. Such entries are also fixed
+   * by update-mods.js --migrate, which backfills the filename.
+   */
+  async function isEnabled(filename: string | null): Promise<boolean> {
+    if (!filename) return true;
+    const disabledPath = path.join(cfg.serverPath, "mods", "disabled", filename);
+    return !(await exists(disabledPath));
   }
 
   /** The richer installed list the dashboard reads: versions, loader, filenames. */
   async function listInstalled(): Promise<InstalledMods | null> {
     const manifest = await readManifest();
     if (!manifest) return null;
-    const mods = Object.entries(manifest.data.mods).map(([slug, entry]) =>
-      // Legacy entries were a bare version-id string; new ones are objects.
-      typeof entry === "string"
-        ? { slug, versionId: entry, filename: null }
-        : {
-            slug,
-            versionId: entry.versionId ?? null,
-            filename: entry.filename ?? null,
-          },
+    const mods = await Promise.all(
+      Object.entries(manifest.data.mods).map(async ([slug, entry]) => {
+        // Legacy entries were a bare version-id string; new ones are objects.
+        const versionId = typeof entry === "string" ? entry : (entry.versionId ?? null);
+        const filename = typeof entry === "string" ? null : (entry.filename ?? null);
+        return { slug, versionId, filename, enabled: await isEnabled(filename) };
+      }),
     );
     mods.sort((a, b) => a.slug.localeCompare(b.slug));
     return {
@@ -244,6 +268,20 @@ export function createMods(cfg: InstanceConfig) {
     return parsed as ModApplyResult;
   }
 
+  /** Disable an installed mod without uninstalling it (see toggle-mod.js). */
+  async function disableMod(slug: string): Promise<ModToggleResult> {
+    const parsed = await runModScript("toggle", [slug, "--disable"], "Disable mod");
+    assertOkField(parsed, "Disable mod");
+    return parsed as ModToggleResult;
+  }
+
+  /** Re-enable a previously disabled mod. */
+  async function enableMod(slug: string): Promise<ModToggleResult> {
+    const parsed = await runModScript("toggle", [slug, "--enable"], "Enable mod");
+    assertOkField(parsed, "Enable mod");
+    return parsed as ModToggleResult;
+  }
+
   return {
     getModSlugs,
     listInstalled,
@@ -252,6 +290,8 @@ export function createMods(cfg: InstanceConfig) {
     checkUpdates,
     applyUpdates,
     updateMod,
+    disableMod,
+    enableMod,
   };
 }
 

@@ -1,5 +1,5 @@
 /**
- * The backup archives: listing them, downloading one, restoring one.
+ * The backup archives: listing them, downloading one, restoring one, deleting one.
  *
  * `GET /backups` next door stays as it was — per-tier counts and the newest
  * archive, cheap enough to poll. These three are the operator-facing half and
@@ -130,6 +130,26 @@ export function registerBackupFileRoutes(
       // Streamed, never buffered: reading a multi-gigabyte archive into memory
       // to hand it over would take the wrapper down on the first big world.
       return reply.send(createReadStream(absPath));
+    },
+  );
+
+  app.delete<{ Params: InstanceParams & { fileId: string } }>(
+    `${P}/backups/files/:fileId`,
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+
+      if (!FILE_ID_RE.test(req.params.fileId)) {
+        return reply.status(400).send({ error: "Invalid backup id" });
+      }
+
+      try {
+        const deleted = await entry.deleteBackupFile(req.params.fileId);
+        if (!deleted) return reply.status(404).send({ error: "Backup not found" });
+        return { ok: true, name: deleted.name, tier: deleted.tier, sizeBytes: deleted.sizeBytes };
+      } catch (err) {
+        return internalError(reply, `backups/delete ${req.params.id}`, err);
+      }
     },
   );
 

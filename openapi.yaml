@@ -47,6 +47,20 @@ components:
         code: { type: string }
       additionalProperties: true
 
+    ModToggleResult:
+      type: object
+      description: The structured result of toggle-mod.js.
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        slug: { type: string }
+        filename: { type: string, nullable: true }
+        alreadyEnabled: { type: boolean }
+        alreadyDisabled: { type: boolean }
+        error: { type: string }
+        code: { type: string }
+      additionalProperties: true
+
     InstanceHealth:
       type: object
       description: >
@@ -82,6 +96,17 @@ components:
               type: integer
               nullable: true
               description: Since the last successful round-trip; null if never.
+        restartCount:
+          type: integer
+          description: >
+            systemd's NRestarts for this unit. 0 when the server answered
+            RCON (nothing to report) or systemd/sudo wasn't available to ask.
+        unitFailed:
+          type: boolean
+          description: >
+            The unit's systemd ActiveState is `failed` — StartLimitBurst
+            tripped and it has stopped retrying (see create_service.sh). The
+            only signal that tells a crash loop apart from a clean outage.
         checkedAt:
           type: integer
           description: When the underlying probe ran (epoch ms).
@@ -662,11 +687,17 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [slug, versionId, filename]
+                      required: [slug, versionId, filename, enabled]
                       properties:
                         slug: { type: string }
                         versionId: { type: string, nullable: true }
                         filename: { type: string, nullable: true }
+                        enabled:
+                          type: boolean
+                          description: >
+                            Whether the jar is in mods/ (true) or
+                            mods/disabled/ (false) — derived from disk
+                            location, not stored state.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404":
           description: Instance unknown, or no mod manifest exists.
@@ -717,6 +748,64 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ModActionResult" }
+        "400":
+          description: Invalid slug.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/mods/{slug}/disable:
+    post:
+      summary: Disable an installed mod without uninstalling it (mod-management)
+      description: >
+        Runs toggle-mod.js --disable as the instance user: moves the jar from mods/
+        into mods/disabled/ so the loader stops loading it on next start, but
+        leaves its downloaded_versions.json entry untouched — it stays
+        "installed" and update-checkable, just inactive. Idempotent: disabling
+        an already-disabled mod reports { ok: true, alreadyDisabled: true }.
+        Takes effect on the server's next start.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The disable script's structured outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModToggleResult" }
+        "400":
+          description: Invalid slug.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/mods/{slug}/enable:
+    post:
+      summary: Re-enable a previously disabled mod (mod-management)
+      description: >
+        Runs toggle-mod.js --enable as the instance user: moves the jar from
+        mods/disabled/ back into mods/. Idempotent: enabling an already-
+        enabled mod reports { ok: true, alreadyEnabled: true }. Takes effect
+        on the server's next start.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The enable script's structured outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModToggleResult" }
         "400":
           description: Invalid slug.
           content:
@@ -887,6 +976,35 @@ paths:
           description: No such instance, or no such archive.
         "500":
           description: The restore script failed or timed out.
+
+  /instances/{id}/backups/files/{fileId}:
+    delete:
+      summary: Permanently delete one archive
+      description: >
+        Not undoable. Resolved through the same id→path lookup every other
+        backup-files route uses, so a deleted archive can only ever be one
+        this wrapper's own index listed.
+      parameters:
+        - { $ref: "#/components/parameters/InstanceId" }
+        - { $ref: "#/components/parameters/BackupFileId" }
+      responses:
+        "200":
+          description: The deleted archive's metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  name: { type: string }
+                  tier: { type: string }
+                  sizeBytes: { type: integer }
+        "400":
+          description: Malformed backup id.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such instance, or no such archive.
 
   /instances/{id}/configs:
     get:

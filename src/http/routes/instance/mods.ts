@@ -8,7 +8,9 @@
  *                   POST /mods               add,
  *                   DELETE /mods/:slug       remove,
  *                   GET  /mods/updates       check,
- *                   POST /mods/updates       apply.
+ *                   POST /mods/updates       apply,
+ *                   POST /mods/:slug/disable disable without uninstalling,
+ *                   POST /mods/:slug/enable  re-enable.
  *
  * The mutating routes run the suite's scripts as the instance user and follow
  * the same convention as /scripts/run and restore: a script that *ran* returns
@@ -169,6 +171,38 @@ export function registerModRoutes(
         return await entry.applyUpdates(mcVersion as string | undefined);
       } catch (err) {
         return internalError(reply, `mods/updates/apply ${req.params.id}`, err);
+      }
+    },
+  );
+
+  app.post<{ Params: InstanceParams & { slug: string } }>(
+    `${P}/mods/:slug/disable`,
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      if (!SLUG_RE.test(req.params.slug)) {
+        return reply.status(400).send({ error: "Invalid mod slug" });
+      }
+      try {
+        return await entry.disableMod(req.params.slug);
+      } catch (err) {
+        return internalError(reply, `mods/disable ${req.params.id}`, err);
+      }
+    },
+  );
+
+  app.post<{ Params: InstanceParams & { slug: string } }>(
+    `${P}/mods/:slug/enable`,
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      if (!SLUG_RE.test(req.params.slug)) {
+        return reply.status(400).send({ error: "Invalid mod slug" });
+      }
+      try {
+        return await entry.enableMod(req.params.slug);
+      } catch (err) {
+        return internalError(reply, `mods/enable ${req.params.id}`, err);
       }
     },
   );

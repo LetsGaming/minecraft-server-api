@@ -64,11 +64,14 @@ export const FEATURES: Record<string, FeatureSpec> = {
     summary: "Liveness, player list, TPS, and level name.",
   },
   "server-health": {
-    version: 1,
+    // v2: restartCount + unitFailed — tells a systemd crash loop apart from
+    // a clean outage. A v1 wrapper's InstanceHealth just has neither field.
+    version: 2,
     routes: ["GET /instances/:id/health"],
     summary:
       "Three-state server health: process liveness and RCON responsiveness " +
-      "reported separately, so a loaded server is not mistaken for a stopped one.",
+      "reported separately, so a loaded server is not mistaken for a stopped " +
+      "one, plus systemd restart-loop detection.",
   },
   "host-info": {
     // v2: process.cpuPercent is sampled instead of ps's lifetime average,
@@ -112,7 +115,10 @@ export const FEATURES: Record<string, FeatureSpec> = {
     summary: "The suite's downloaded_versions.json mod manifest.",
   },
   "mod-management": {
-    version: 1,
+    // v2: installed-list entries gained `enabled` (disk location: mods/ vs
+    // mods/disabled/), plus the disable/enable routes below. A v1 wrapper's
+    // entries just have no `enabled` field — the bot treats that as true.
+    version: 2,
     routes: [
       "GET /instances/:id/mods/installed",
       "POST /instances/:id/mods",
@@ -120,10 +126,13 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "POST /instances/:id/mods/:slug/update",
       "GET /instances/:id/mods/updates",
       "POST /instances/:id/mods/updates",
+      "POST /instances/:id/mods/:slug/disable",
+      "POST /instances/:id/mods/:slug/enable",
     ],
     summary:
-      "Installing, removing and updating mods by driving the suite's " +
-      "scripts/update/*.js as the instance user, plus a richer installed list.",
+      "Installing, removing, updating, disabling and enabling mods by " +
+      "driving the suite's scripts/update/*.js as the instance user, plus " +
+      "a richer installed list.",
   },
   backups: {
     version: 1,
@@ -131,14 +140,17 @@ export const FEATURES: Record<string, FeatureSpec> = {
     summary: "Backup tier listing and sizes.",
   },
   "backup-files": {
-    version: 1,
+    // v2 adds DELETE — same resource, same id space, same guards as v1, so
+    // this bumps the existing feature rather than adding a new one.
+    version: 2,
     routes: [
       "GET /instances/:id/backups/files",
       "GET /instances/:id/backups/files/:fileId/download",
+      "DELETE /instances/:id/backups/files/:fileId",
     ],
     summary:
-      "Listing individual archives and downloading one, addressed by an " +
-      "opaque id rather than a path.",
+      "Listing individual archives, downloading one, and deleting one, " +
+      "addressed by an opaque id rather than a path.",
   },
   "mod-configs": {
     version: 1,
