@@ -8,6 +8,24 @@ semver.
 
 ### Added
 
+- **Bulk player stats** (`stats-bulk` manifest feature, v1): `GET /instances/:id/stats/bulk` returns every player's stats file in one response, bounded to 8 concurrent reads server-side. Replaces the pattern of one HTTP request per lifetime player a leaderboard build used to make against this wrapper — on a server with a few hundred players who have ever joined, that was a few hundred simultaneous requests landing on a 4-thread filesystem pool and a shared rate-limit budget at once. Cached 30s/300s, same as the bot's own `loadAllStats()` TTL.
+- **`GET /metrics`** (authenticated, exempt from rate limiting): per-route request count/p50/p95/error/timeout, current and peak in-flight requests, cache hit/miss counts, rate-limit rejections, RCON reconnect count, event-loop delay, and process memory/uptime. There was previously no way to answer what the wrapper was doing right before it became briefly unreachable.
+
+### Changed
+
+- The global rate limit (300 requests / 15 min, shared by every client and every route) is now two separate budgets: reads get 100/min, writes (scripts, mod mutations, restore, console commands) get a stricter 10/min. Both return `Retry-After`. The old flat budget was easy for a single leaderboard build or one open dashboard tab to exhaust well before the window rolled, and every request past it looked identical to the bot as "wrapper unreachable" rather than "rate limited".
+- Added a global in-flight request ceiling (32) returning a fast 503 + `Retry-After` above it, instead of accepting more work than the process can serve in time.
+- Previously-uncached routes now use the existing single-flight/stale-while-revalidate cache: `/instances/:id/info`'s host block (60s/300s — this route ran two full `du` walks per call), `/capabilities` (5min/1h), `/whitelist` (30s/300s), `/usercache` (60s/600s), `/backups` (60s/600s), `/backups/files` (60s/600s), and `/mods` + `/mods/installed` (60s/600s). Each is invalidated by the mutation that can change it.
+- `mods.ts`'s `getModSlugs()` checked each installed mod's enabled/disabled state one at a time in a sequential loop; it and `listInstalled()`'s equivalent unbounded `Promise.all` now both go through a bounded-concurrency helper (`platform/concurrency.ts`), also applied to the backup-files index.
+- PM2's memory ceiling moved from `max_memory_restart: "256M"` to `768M` with a matching `--max-old-space-size`, and both the PM2 and systemd deployment paths now set `UV_THREADPOOL_SIZE=8`; the systemd unit gained a `MemoryMax` it never had.
+
+### Fixed
+
+- A sustained RCON outage had no backoff: every failed `send()` retried a full TCP connect + up to a 10s auth timeout on the very next call, and a burst of concurrent `/command` requests during that window could each hold a request open for up to 25s (the auth timeout plus the `screen stuff` fallback). The RCON client now fails fast for 2s after a failed connect instead.
+- `AuthFailTracker` (the auth-failure rate limiter) never evicted an IP once tracked, growing forever under a scanner hitting many source addresses. It now sweeps aged-out entries once past 10,000 tracked IPs.
+- `logStream.ts`'s per-instance 1s log-tail poller used synchronous `fs` calls on the event loop and ran its full read-and-broadcast work every tick regardless of whether any SSE client was attached to that instance; it now uses async `fs` calls and skips straight to tracking the read offset when nobody is watching.
+- `platform/spawn.ts` (the shared runner behind scripts, mod mutations, and restore) accumulated a spawned process's entire stdout/stderr in memory with no cap; a chatty script over the 600s mod-update timeout could grow unbounded. Capped at 2 MiB per stream.
+
 - **Mod config file API** (`mod-configs` manifest feature, v1): index, read,
   write and revert for mod config files.
 
