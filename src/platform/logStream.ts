@@ -6,6 +6,7 @@
  * last offset; rotation (rename / truncation) resets the offset.
  */
 import fs from "fs";
+import fsp from "fs/promises";
 import path from "path";
 import readline from "readline";
 import type { ServerResponse } from "http";
@@ -90,7 +91,7 @@ export function initLogStream(
       try {
         if (event === "rename") {
           try {
-            fs.accessSync(logFilePath);
+            await fsp.access(logFilePath);
             state.lastSize = 0;
           } catch {
             return;
@@ -99,13 +100,23 @@ export function initLogStream(
 
         let stat: fs.Stats;
         try {
-          stat = fs.statSync(logFilePath);
+          stat = await fsp.stat(logFilePath);
         } catch {
           return;
         }
 
         if (stat.size < state.lastSize) state.lastSize = 0;
         if (stat.size === state.lastSize) return;
+
+        // Nobody is watching this instance's tail right now — track the
+        // offset so a later connect doesn't replay a backlog, but skip the
+        // read + JSON.stringify + broadcast work. This is what runs every
+        // second per instance regardless of viewers, so it is exactly what
+        // competes with request serving during a busy or backup window.
+        if (clients.size === 0) {
+          state.lastSize = stat.size;
+          return;
+        }
 
         // A-05: clamp the read window
         const readEnd = Math.min(stat.size - 1, state.lastSize + MAX_DELTA_BYTES - 1);

@@ -7,7 +7,7 @@
  * path at all". They are here because the panel this replaces did take a path,
  * and the temptation to port that signature is exactly what these pin shut.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -392,7 +392,18 @@ describe("POST /backups/files/:fileId/restore", () => {
 describe("DELETE /backups/files/:fileId", () => {
   it("deletes the archive; it's gone from disk and from the index", async () => {
     writeArchive("hourly", "delete-me.tar.zst", 256, 5_000_000);
-    const before = await index();
+    // The index is cached (see backupFiles.ts) and earlier tests in this file
+    // already populated it against the shared app's operations registry;
+    // force a reload so this new file is visible, the way a real minute of
+    // wall-clock time would.
+    vi.useFakeTimers();
+    let before: Awaited<ReturnType<typeof index>>;
+    try {
+      await vi.advanceTimersByTimeAsync(60_001);
+      before = await index();
+    } finally {
+      vi.useRealTimers();
+    }
     const file = before.files.find((f) => f.name === "delete-me.tar.zst")!;
     expect(file).toBeDefined();
 
@@ -453,7 +464,14 @@ describe("DELETE /backups/files/:fileId", () => {
 
   it("401s without the key, and does not delete the file", async () => {
     writeArchive("hourly", "auth-check.tar.zst", 64, 7_000_000);
-    const body = await index();
+    vi.useFakeTimers();
+    let body: Awaited<ReturnType<typeof index>>;
+    try {
+      await vi.advanceTimersByTimeAsync(60_001);
+      body = await index();
+    } finally {
+      vi.useRealTimers();
+    }
     const file = body.files.find((f) => f.name === "auth-check.tar.zst")!;
 
     const res = await app.inject({

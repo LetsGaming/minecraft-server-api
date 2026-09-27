@@ -36,6 +36,7 @@ import {
   sleep,
 } from "./cpu.js";
 import { getDiskUsage, monitoredPaths } from "./disk.js";
+import { cached } from "../cache.js";
 import { execSafe } from "../exec.js";
 import type {
   DiskUsage,
@@ -44,6 +45,26 @@ import type {
   ProcessUsage,
 } from "../../contracts/wire.js";
 import type { InstanceConfig } from "../../config/types.js";
+
+/**
+ * Disk sizes cost a `du -sk` full recursive walk per monitored path (the
+ * server directory and the backups directory, both potentially multi-GB) and
+ * disks fill slowly, so they get a long TTL. `df`/CPU/process figures are
+ * cheap and change quickly, so they get a short one — one TTL could not
+ * serve both without either re-walking every poll or reporting stale CPU.
+ */
+const DISK_FRESH_MS = 60_000;
+const DISK_STALE_MS = 300_000;
+const diskCachesByPath = new Map<string, ReturnType<typeof cached<DiskUsage | null>>>();
+
+function cachedDiskUsage(dir: string): ReturnType<typeof cached<DiskUsage | null>> {
+  let entry = diskCachesByPath.get(dir);
+  if (!entry) {
+    entry = cached(() => getDiskUsage(dir), { freshMs: DISK_FRESH_MS, staleMs: DISK_STALE_MS });
+    diskCachesByPath.set(dir, entry);
+  }
+  return entry;
+}
 
 /** Whole-machine CPU and memory. null where /proc is unavailable. */
 export async function getHostUsage(): Promise<HostUsage | null> {
@@ -117,7 +138,7 @@ export async function getHostInfo(cfg: InstanceConfig): Promise<HostInfo> {
   const [proc, host, ...disks] = await Promise.all([
     getServerProcessUsage(cfg.linuxUser),
     getHostUsage(),
-    ...monitoredPaths(cfg).map((p) => getDiskUsage(p)),
+    ...monitoredPaths(cfg).map((p) => cachedDiskUsage(p).get().then((e) => e.value)),
   ]);
   return {
     process: proc,

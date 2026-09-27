@@ -1,0 +1,164 @@
+/**
+ * In-process counters for GET /metrics.
+ *
+ * There was no way to answer "what was happening right before the wrapper
+ * went unreachable" — no request log, no in-flight count, nothing. This is
+ * deliberately plain (a few Maps, no dependency): the point is a cheap,
+ * always-on signal, not a full metrics stack for a single-process wrapper.
+ *
+ * Percentiles are computed from a bounded ring buffer per route rather than
+ * kept exactly, since an unbounded per-route array would itself become a
+ * memory-growth bug in the thing meant to diagnose memory growth.
+ */
+import { monitorEventLoopDelay } from "perf_hooks";
+
+const SAMPLE_SIZE = 200;
+
+interface RouteMetric {
+  count: number;
+  errorCount: number;
+  timeoutCount: number;
+  samples: number[];
+  /** Ring buffer write cursor. */
+  next: number;
+}
+
+const routes = new Map<string, RouteMetric>();
+
+let inFlight = 0;
+let peakInFlight = 0;
+let rateLimitRejections = 0;
+let rconReconnects = 0;
+
+const cacheStats = new Map<string, { hits: number; misses: number }>();
+
+const eventLoopMonitor = monitorEventLoopDelay({ resolution: 20 });
+eventLoopMonitor.enable();
+
+function routeKey(method: string, routePath: string): string {
+  return `${method} ${routePath}`;
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  return sorted[idx]!;
+}
+
+export function beginRequest(): void {
+  inFlight++;
+  if (inFlight > peakInFlight) peakInFlight = inFlight;
+}
+
+export function endRequest(): void {
+  inFlight = Math.max(0, inFlight - 1);
+}
+
+export function getInFlight(): number {
+  return inFlight;
+}
+
+/** Timed out at the HTTP layer specifically (a script/script-runner timeout), not just a 5xx. */
+export function recordRequest(
+  method: string,
+  routePath: string,
+  status: number,
+  durationMs: number,
+  timedOut = false,
+): void {
+  const key = routeKey(method, routePath);
+  let m = routes.get(key);
+  if (!m) {
+    m = { count: 0, errorCount: 0, timeoutCount: 0, samples: [], next: 0 };
+    routes.set(key, m);
+  }
+  m.count++;
+  if (status >= 500) m.errorCount++;
+  if (timedOut) m.timeoutCount++;
+  if (m.samples.length < SAMPLE_SIZE) m.samples.push(durationMs);
+  else m.samples[m.next] = durationMs;
+  m.next = (m.next + 1) % SAMPLE_SIZE;
+}
+
+export function recordRateLimitRejection(): void {
+  rateLimitRejections++;
+}
+
+export function recordRconReconnect(): void {
+  rconReconnects++;
+}
+
+export function recordCacheHit(name: string): void {
+  const s = cacheStats.get(name) ?? { hits: 0, misses: 0 };
+  s.hits++;
+  cacheStats.set(name, s);
+}
+
+export function recordCacheMiss(name: string): void {
+  const s = cacheStats.get(name) ?? { hits: 0, misses: 0 };
+  s.misses++;
+  cacheStats.set(name, s);
+}
+
+export interface MetricsSnapshot {
+  uptimeSeconds: number;
+  memory: NodeJS.MemoryUsage;
+  inFlight: number;
+  peakInFlight: number;
+  rateLimitRejections: number;
+  rconReconnects: number;
+  eventLoopDelayMs: { mean: number; p95: number; max: number };
+  cache: Record<string, { hits: number; misses: number; hitRate: number }>;
+  routes: Record<
+    string,
+    { count: number; errorCount: number; timeoutCount: number; p50Ms: number; p95Ms: number }
+  >;
+}
+
+export function getSnapshot(): MetricsSnapshot {
+  const routeSnapshot: MetricsSnapshot["routes"] = {};
+  for (const [key, m] of routes) {
+    const sorted = [...m.samples].sort((a, b) => a - b);
+    routeSnapshot[key] = {
+      count: m.count,
+      errorCount: m.errorCount,
+      timeoutCount: m.timeoutCount,
+      p50Ms: percentile(sorted, 50),
+      p95Ms: percentile(sorted, 95),
+    };
+  }
+
+  const cacheSnapshot: MetricsSnapshot["cache"] = {};
+  for (const [name, s] of cacheStats) {
+    const total = s.hits + s.misses;
+    cacheSnapshot[name] = { ...s, hitRate: total > 0 ? s.hits / total : 0 };
+  }
+
+  const hist = eventLoopMonitor;
+  return {
+    uptimeSeconds: Math.round(process.uptime()),
+    memory: process.memoryUsage(),
+    inFlight,
+    peakInFlight,
+    rateLimitRejections,
+    rconReconnects,
+    eventLoopDelayMs: {
+      mean: hist.mean / 1e6,
+      p95: hist.percentile(95) / 1e6,
+      max: hist.max / 1e6,
+    },
+    cache: cacheSnapshot,
+    routes: routeSnapshot,
+  };
+}
+
+/** Test-only: drop all accumulated counters. */
+export function resetMetricsForTesting(): void {
+  routes.clear();
+  cacheStats.clear();
+  inFlight = 0;
+  peakInFlight = 0;
+  rateLimitRejections = 0;
+  rconReconnects = 0;
+  eventLoopMonitor.reset();
+}

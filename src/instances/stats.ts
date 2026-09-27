@@ -5,9 +5,17 @@
 import fsp from "fs/promises";
 import path from "path";
 
+import { cached } from "../platform/cache.js";
 import { log } from "../platform/logger.js";
+import { mapLimit } from "../platform/concurrency.js";
 import type { World } from "./world.js";
 import type { InstanceConfig } from "../config/types.js";
+
+/** Above the 4-thread libuv pool, low enough to leave it room for other work. */
+const STATS_READ_CONCURRENCY = 8;
+/** Matches the bot's own loadAllStats() TTL, so the two never disagree. */
+const ALL_STATS_FRESH_MS = 30_000;
+const ALL_STATS_STALE_MS = 300_000;
 
 /**
  * Layouts we know of, in order. Vanilla first — it is the documented
@@ -121,5 +129,42 @@ async function deleteStats(uuid: string): Promise<boolean> {
   }
 }
 
-  return { getStats, listStatsUuids, deleteStats };
+  /**
+   * Every player's stats in one call, bounded to STATS_READ_CONCURRENCY
+   * concurrent reads instead of the caller firing one HTTP request per uuid
+   * (which is what forced this route to exist: a lifetime player count of a
+   * few hundred meant a few hundred simultaneous requests for one
+   * leaderboard build).
+   */
+  async function loadAllStats(): Promise<Record<string, unknown>> {
+    const uuids = await listStatsUuids();
+    const entries = await mapLimit(
+      uuids,
+      STATS_READ_CONCURRENCY,
+      async (uuid) => [uuid, await getStats(uuid)] as const,
+    );
+    const out: Record<string, unknown> = {};
+    for (const [uuid, stats] of entries) if (stats !== null) out[uuid] = stats;
+    return out;
+  }
+
+  const allStatsCache = cached(loadAllStats, {
+    freshMs: ALL_STATS_FRESH_MS,
+    staleMs: ALL_STATS_STALE_MS,
+  });
+
+  async function getAllStats(): Promise<Record<string, unknown>> {
+    return (await allStatsCache.get()).value;
+  }
+
+  return {
+    getStats,
+    listStatsUuids,
+    deleteStats: async (uuid: string) => {
+      const deleted = await deleteStats(uuid);
+      if (deleted) allStatsCache.invalidate();
+      return deleted;
+    },
+    getAllStats,
+  };
 }

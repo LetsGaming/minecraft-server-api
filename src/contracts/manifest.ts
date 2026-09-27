@@ -30,6 +30,7 @@ export const MANIFEST_VERSION = 1;
 export const META_ROUTES = [
   "GET /health",
   "GET /manifest",
+  "GET /metrics",
   "GET /instances",
 ] as const;
 
@@ -103,6 +104,11 @@ export const FEATURES: Record<string, FeatureSpec> = {
     version: 1,
     routes: ["GET /instances/:id/stats", "GET /instances/:id/stats/:uuid"],
     summary: "Player stat files, for stats and leaderboards.",
+  },
+  "stats-bulk": {
+    version: 1,
+    routes: ["GET /instances/:id/stats/bulk"],
+    summary: "Every player's stats in one request, instead of one per uuid.",
   },
   "stats-delete": {
     version: 1,

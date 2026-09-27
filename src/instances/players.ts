@@ -5,16 +5,24 @@
 import fsp from "fs/promises";
 import path from "path";
 
+import { cached } from "../platform/cache.js";
 import type { HealthMonitor } from "./health.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { PlayerList, WhitelistEntry } from "../contracts/wire.js";
+
+/** whitelist.json only changes on an explicit whitelist add/remove. */
+const WHITELIST_FRESH_MS = 30_000;
+const WHITELIST_STALE_MS = 300_000;
+/** usercache.json is effectively append-only and can be megabytes. */
+const USERCACHE_FRESH_MS = 60_000;
+const USERCACHE_STALE_MS = 600_000;
 
 export function createPlayers(cfg: InstanceConfig, health: HealthMonitor) {
 async function getList(): Promise<PlayerList> {
   return health.getList();
 }
 
-async function getWhitelist(): Promise<unknown[]> {
+async function readWhitelist(): Promise<unknown[]> {
   try {
     const data: unknown = JSON.parse(
       await fsp.readFile(path.join(cfg.serverPath, "whitelist.json"), "utf-8"),
@@ -25,6 +33,15 @@ async function getWhitelist(): Promise<unknown[]> {
   }
 }
 
+const whitelistCache = cached(readWhitelist, {
+  freshMs: WHITELIST_FRESH_MS,
+  staleMs: WHITELIST_STALE_MS,
+});
+
+async function getWhitelist(): Promise<unknown[]> {
+  return (await whitelistCache.get()).value;
+}
+
 /**
  * usercache.json — every player the server has ever seen, whitelist or
  * not. The bot layers this over the whitelist as a best-effort name
@@ -32,7 +49,7 @@ async function getWhitelist(): Promise<unknown[]> {
  * the {name, uuid} shape the bot expects; Mojang's extra fields
  * (expiresOn) are dropped.
  */
-async function getUserCache(): Promise<WhitelistEntry[]> {
+async function readUserCache(): Promise<WhitelistEntry[]> {
   try {
     const data: unknown = JSON.parse(
       await fsp.readFile(path.join(cfg.serverPath, "usercache.json"), "utf-8"),
@@ -44,6 +61,15 @@ async function getUserCache(): Promise<WhitelistEntry[]> {
   } catch {
     return [];
   }
+}
+
+const userCacheCache = cached(readUserCache, {
+  freshMs: USERCACHE_FRESH_MS,
+  staleMs: USERCACHE_STALE_MS,
+});
+
+async function getUserCache(): Promise<WhitelistEntry[]> {
+  return (await userCacheCache.get()).value;
 }
 
   return { getList, getWhitelist, getUserCache };
