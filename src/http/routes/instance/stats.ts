@@ -26,6 +26,18 @@ export function registerStatsRoutes(
     }
   });
 
+  // Every player's stats in one response, bounded server-side, so a
+  // leaderboard build costs one request instead of one per lifetime player.
+  app.get<{ Params: InstanceParams }>(`${P}/stats/bulk`, async (req, reply) => {
+    const entry = resolve(req.params.id, reply);
+    if (!entry) return;
+    try {
+      return { stats: await entry.getAllStats() };
+    } catch (err) {
+      return internalError(reply, `stats/bulk ${req.params.id}`, err);
+    }
+  });
+
   app.get<{ Params: InstanceParams & { uuid: string } }>(
     `${P}/stats/:uuid`,
     async (req, reply) => {

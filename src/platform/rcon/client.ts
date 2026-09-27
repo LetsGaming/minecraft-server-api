@@ -7,6 +7,15 @@
 import net from "net";
 
 import { decodePkt, encodePkt } from "./packet.js";
+import { recordRconReconnect } from "../metrics.js";
+
+/**
+ * After a failed connect, refuse a new attempt for this long. Without it, a
+ * burst of concurrent callers during a genuine RCON outage each pay their
+ * own full TCP-connect + 10s auth timeout instead of failing fast off one
+ * shared, recent answer.
+ */
+const RECONNECT_COOLDOWN_MS = 2_000;
 
 // ── RconClient ────────────────────────────────────────────────────────────
 
@@ -38,6 +47,8 @@ export class RconClient {
   private _waiters: Waiter[] = [];
   /** Timestamp of the last successful command round-trip (isRunning fast path). */
   lastSuccessTime = 0;
+  /** Timestamp of the last failed connect/auth attempt; 0 means none yet. */
+  private _lastFailureTime = 0;
 
   constructor(host: string, port: number, password: string) {
     this.host = host;
@@ -83,6 +94,18 @@ export class RconClient {
         return;
       }
 
+      // A caller during a genuine outage would otherwise pay a full TCP
+      // connect + up to 10s auth timeout on every single command; fail
+      // fast off the recent answer instead so a burst of concurrent
+      // callers does not each hold a request open that long.
+      if (
+        this._lastFailureTime > 0 &&
+        Date.now() - this._lastFailureTime < RECONNECT_COOLDOWN_MS
+      ) {
+        reject(new Error("RCON reconnect cooldown active (recent connect failed)"));
+        return;
+      }
+
       this._cleanup();
       this._connecting = true;
       this._authResolve = resolve;
@@ -92,6 +115,7 @@ export class RconClient {
       socket.setKeepAlive(true, 30_000);
 
       const authTimeout = setTimeout(() => {
+        this._lastFailureTime = Date.now();
         this._cleanup();
         reject(new Error("RCON auth timeout"));
       }, 10_000);
@@ -111,6 +135,7 @@ export class RconClient {
             clearTimeout(authTimeout);
             if (pkt.id === -1) {
               this._connecting = false;
+              this._lastFailureTime = Date.now();
               const err = new Error("RCON auth failed");
               // reject waiters before _cleanup clears the lists
               for (const w of this._waiters) w.reject(err);
@@ -122,6 +147,8 @@ export class RconClient {
             if (pkt.id === 1) {
               this._auth = true;
               this._connecting = false;
+              this._lastFailureTime = 0;
+              recordRconReconnect();
               this._authResolve?.();
               this._authResolve = null;
               this._authReject = null;
@@ -142,7 +169,10 @@ export class RconClient {
         }
       });
 
-      socket.on("error", () => this._cleanup());
+      socket.on("error", () => {
+        this._lastFailureTime = Date.now();
+        this._cleanup();
+      });
       socket.on("close", () => this._cleanup());
     });
   }

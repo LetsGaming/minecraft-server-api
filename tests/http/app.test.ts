@@ -261,6 +261,17 @@ describe("file-backed routes", () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it("GET /stats/bulk returns every uuid's stats in one response", async () => {
+    const res = await app.inject({ url: "/instances/survival/stats/bulk", headers: auth });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { stats: Record<string, unknown> };
+    expect(Object.keys(body.stats)).toEqual([UUID]);
+    expect(body.stats[UUID]).toEqual((await app.inject({
+      url: `/instances/survival/stats/${UUID}`,
+      headers: auth,
+    })).json().stats);
+  });
+
   it("GET /mods returns slugs + mtime", async () => {
     const res = await app.inject({ url: "/instances/survival/mods", headers: auth });
     const body = res.json() as { slugs: string[]; mtimeMs: number };

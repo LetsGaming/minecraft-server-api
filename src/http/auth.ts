@@ -17,8 +17,24 @@ import type { AppConfig } from "../config/types.js";
 const AUTH_FAIL_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_FAIL_MAX = 20;
 
+/**
+ * Above this many distinct IPs tracked at once, a periodic sweep drops
+ * entries with no failures inside the window — otherwise a scanner hitting
+ * many source addresses grows this map forever, never freeing entries that
+ * age out on their own (isBlocked/recordFailure only prune the one IP they
+ * touch).
+ */
+const MAX_TRACKED_IPS = 10_000;
+
 export class AuthFailTracker {
   private readonly failures = new Map<string, number[]>();
+
+  private sweepIfLarge(now: number): void {
+    if (this.failures.size <= MAX_TRACKED_IPS) return;
+    for (const [ip, list] of this.failures) {
+      if (list.every((t) => now - t >= AUTH_FAIL_WINDOW_MS)) this.failures.delete(ip);
+    }
+  }
 
   /** True when this IP has exhausted its failure budget. */
   isBlocked(ip: string): boolean {
@@ -31,9 +47,11 @@ export class AuthFailTracker {
   }
 
   recordFailure(ip: string): void {
+    const now = Date.now();
     const list = this.failures.get(ip) ?? [];
-    list.push(Date.now());
+    list.push(now);
     this.failures.set(ip, list);
+    this.sweepIfLarge(now);
   }
 }
 

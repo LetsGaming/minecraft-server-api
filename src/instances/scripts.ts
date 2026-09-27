@@ -8,9 +8,14 @@
 import fsp from "fs/promises";
 import path from "path";
 
+import { cached } from "../platform/cache.js";
 import { runAsInstanceUser } from "../platform/spawn.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { Capabilities, ScriptResult } from "../contracts/wire.js";
+
+/** These artifacts only change on a redeploy of the setup suite. */
+const CAPABILITIES_FRESH_MS = 300_000;
+const CAPABILITIES_STALE_MS = 3_600_000;
 
 /**
  * The restore script, deliberately outside SCRIPT_MAP.
@@ -65,7 +70,7 @@ export function createScripts(cfg: InstanceConfig) {
  * GET /instances/:id/capabilities and fall back to assuming everything
  * is available when the route is missing (older wrappers).
  */
-async function getCapabilities(): Promise<Capabilities> {
+async function getCapabilitiesUncached(): Promise<Capabilities> {
   const scriptExists = async (rel: string): Promise<boolean> =>
     !!cfg.scriptsDir && (await exists(path.join(cfg.scriptsDir, rel)));
   // Independent probes, so run them together rather than serially — this
@@ -104,6 +109,15 @@ async function getCapabilities(): Promise<Capabilities> {
     modManifest,
     variablesFile,
   };
+}
+
+const capabilitiesCache = cached(getCapabilitiesUncached, {
+  freshMs: CAPABILITIES_FRESH_MS,
+  staleMs: CAPABILITIES_STALE_MS,
+});
+
+async function getCapabilities(): Promise<Capabilities> {
+  return (await capabilitiesCache.get()).value;
 }
 
 async function runScript(action: string, args?: string[]): Promise<ScriptResult> {

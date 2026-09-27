@@ -42,6 +42,17 @@ export interface SudoSpawnResult {
 }
 
 /**
+ * A chatty script (a verbose backup, a mod-update loop) over a timeout as
+ * long as 600s would otherwise accumulate unbounded output in memory. The
+ * error/timeout paths already only need the tail for the message; a script
+ * that succeeds needs it in full (add-mod's --json output, for one), so this
+ * caps rather than truncates outright — hitting it is itself worth knowing
+ * about, hence the marker appended below.
+ */
+const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
+const TRUNCATION_MARKER = "\n…(output truncated)\n";
+
+/**
  * Run `sudo -n -u <linuxUser> <command…>` and collect its output.
  *
  * `command` is the full argv *after* the sudo user flags — e.g.
@@ -78,6 +89,8 @@ export function runAsInstanceUser(
 
     let stdout = "";
     let stderr = "";
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let killed = false;
 
     const timer = setTimeout(() => {
@@ -96,9 +109,17 @@ export function runAsInstanceUser(
     }, timeoutMs);
 
     child.stdout.on("data", (d: Buffer) => {
+      if (stdout.length >= MAX_OUTPUT_BYTES) {
+        stdoutTruncated = true;
+        return;
+      }
       stdout += d.toString();
     });
     child.stderr.on("data", (d: Buffer) => {
+      if (stderr.length >= MAX_OUTPUT_BYTES) {
+        stderrTruncated = true;
+        return;
+      }
       stderr += d.toString();
     });
 
@@ -124,7 +145,11 @@ export function runAsInstanceUser(
         .join("\n")
         .trim();
 
-      resolve({ output: stdout.trim(), stderr, exitCode: code });
+      resolve({
+        output: stdoutTruncated ? stdout.trim() + TRUNCATION_MARKER : stdout.trim(),
+        stderr: stderrTruncated ? stderr + TRUNCATION_MARKER : stderr,
+        exitCode: code,
+      });
     });
 
     child.on("error", (err) => {

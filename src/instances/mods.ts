@@ -23,7 +23,15 @@
 import fsp from "fs/promises";
 import path from "path";
 
+import { cached } from "../platform/cache.js";
+import { mapLimit } from "../platform/concurrency.js";
 import { runAsInstanceUser } from "../platform/spawn.js";
+
+/** Above the 4-thread libuv pool, low enough to leave it room for other work. */
+const EXISTS_CONCURRENCY = 8;
+/** The manifest and disabled/ markers only change on a redeploy or a mutation. */
+const MODS_FRESH_MS = 60_000;
+const MODS_STALE_MS = 600_000;
 import type { InstanceConfig } from "../config/types.js";
 import type {
   InstalledMods,
@@ -128,15 +136,28 @@ export function createMods(cfg: InstanceConfig) {
    * for a feature that currently doesn't exist. Kept otherwise as it was —
    * its shape is the `mods` v1 feature contract the bot casts to.
    */
-  async function getModSlugs(): Promise<{ slugs: string[]; mtimeMs: number } | null> {
+  async function getModSlugsUncached(): Promise<{ slugs: string[]; mtimeMs: number } | null> {
     const manifest = await readManifest();
     if (!manifest) return null;
-    const slugs: string[] = [];
-    for (const [slug, entry] of Object.entries(manifest.data.mods)) {
-      const filename = typeof entry === "string" ? null : (entry.filename ?? null);
-      if (await isEnabled(filename)) slugs.push(slug);
-    }
+    const flags = await mapLimit(
+      Object.entries(manifest.data.mods),
+      EXISTS_CONCURRENCY,
+      async ([slug, entry]) => {
+        const filename = typeof entry === "string" ? null : (entry.filename ?? null);
+        return [slug, await isEnabled(filename)] as const;
+      },
+    );
+    const slugs = flags.filter(([, enabled]) => enabled).map(([slug]) => slug);
     return { slugs, mtimeMs: manifest.mtimeMs };
+  }
+
+  const modSlugsCache = cached(getModSlugsUncached, {
+    freshMs: MODS_FRESH_MS,
+    staleMs: MODS_STALE_MS,
+  });
+
+  async function getModSlugs(): Promise<{ slugs: string[]; mtimeMs: number } | null> {
+    return (await modSlugsCache.get()).value;
   }
 
   /**
@@ -155,16 +176,18 @@ export function createMods(cfg: InstanceConfig) {
   }
 
   /** The richer installed list the dashboard reads: versions, loader, filenames. */
-  async function listInstalled(): Promise<InstalledMods | null> {
+  async function listInstalledUncached(): Promise<InstalledMods | null> {
     const manifest = await readManifest();
     if (!manifest) return null;
-    const mods = await Promise.all(
-      Object.entries(manifest.data.mods).map(async ([slug, entry]) => {
+    const mods = await mapLimit(
+      Object.entries(manifest.data.mods),
+      EXISTS_CONCURRENCY,
+      async ([slug, entry]) => {
         // Legacy entries were a bare version-id string; new ones are objects.
         const versionId = typeof entry === "string" ? entry : (entry.versionId ?? null);
         const filename = typeof entry === "string" ? null : (entry.filename ?? null);
         return { slug, versionId, filename, enabled: await isEnabled(filename) };
-      }),
+      },
     );
     mods.sort((a, b) => a.slug.localeCompare(b.slug));
     return {
@@ -173,6 +196,20 @@ export function createMods(cfg: InstanceConfig) {
       mtimeMs: manifest.mtimeMs,
       mods,
     };
+  }
+
+  const listInstalledCache = cached(listInstalledUncached, {
+    freshMs: MODS_FRESH_MS,
+    staleMs: MODS_STALE_MS,
+  });
+
+  async function listInstalled(): Promise<InstalledMods | null> {
+    return (await listInstalledCache.get()).value;
+  }
+
+  function invalidateModsCache(): void {
+    modSlugsCache.invalidate();
+    listInstalledCache.invalidate();
   }
 
   /**
@@ -196,6 +233,11 @@ export function createMods(cfg: InstanceConfig) {
       ["node", scriptPath, ...args, "--json"],
       { timeoutMs: SCRIPT_TIMEOUTS[which], label },
     );
+
+    // Every script but "check" can change the manifest or mods/disabled/ on
+    // disk, win or lose — invalidate unconditionally rather than trust each
+    // script's own ok field to say so.
+    if (which !== "check") invalidateModsCache();
 
     try {
       return JSON.parse(result.output);

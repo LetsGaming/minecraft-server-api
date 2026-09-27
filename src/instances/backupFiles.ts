@@ -29,7 +29,21 @@ import { createHash } from "crypto";
 import fsp from "fs/promises";
 import path from "path";
 
+import { cached } from "../platform/cache.js";
+import { mapLimit } from "../platform/concurrency.js";
 import type { InstanceConfig } from "../config/types.js";
+
+/** Above the 4-thread libuv pool, low enough to leave it room for other work. */
+const STAT_CONCURRENCY = 8;
+
+/**
+ * The full index is a readdir + stat per tier and is the threadpool flooder
+ * this cache exists to stop. Backups rotate on their own schedule (hourly at
+ * the fastest), so a minute-old listing is never meaningfully wrong, and
+ * every mutating route (restore, delete) invalidates it explicitly.
+ */
+const INDEX_FRESH_MS = 60_000;
+const INDEX_STALE_MS = 600_000;
 
 /** Tier directories the suite writes, in the order the panel shows them. */
 const TIERS = [
@@ -87,7 +101,7 @@ export function createBackupFiles(cfg: InstanceConfig) {
    * flat inside each tier, and walking arbitrarily deep would be both slower
    * and an invitation to follow a symlinked directory out of the tree.
    */
-  async function listAll(): Promise<BackupFileInfo[]> {
+  async function listAllUncached(): Promise<BackupFileInfo[]> {
     if (!cfg.backupsPath) return [];
     const backupsPath = cfg.backupsPath;
 
@@ -100,8 +114,10 @@ export function createBackupFiles(cfg: InstanceConfig) {
         return []; // tier not present on this instance
       }
 
-      const out = await Promise.all(
-        entries.filter(isArchive).map(async (name) => {
+      const out = await mapLimit(
+        entries.filter(isArchive),
+        STAT_CONCURRENCY,
+        async (name) => {
           try {
             const stat = await fsp.stat(path.join(dir, name));
             if (!stat.isFile()) return null;
@@ -118,13 +134,22 @@ export function createBackupFiles(cfg: InstanceConfig) {
             // rather than failing the whole listing.
             return null;
           }
-        }),
+        },
       );
       return out.filter((f): f is BackupFileInfo => f !== null);
     }
 
     const perTier = await Promise.all(TIERS.map(readTier));
     return perTier.flat().sort((a, b) => b.mtimeMs - a.mtimeMs);
+  }
+
+  const indexCache = cached(listAllUncached, {
+    freshMs: INDEX_FRESH_MS,
+    staleMs: INDEX_STALE_MS,
+  });
+
+  async function listAll(): Promise<BackupFileInfo[]> {
+    return (await indexCache.get()).value;
   }
 
   /**
@@ -201,8 +226,9 @@ export function createBackupFiles(cfg: InstanceConfig) {
     const found = await resolve(id);
     if (!found) return null;
     await fsp.unlink(found.absPath);
+    indexCache.invalidate();
     return found.info;
   }
 
-  return { index, resolve, remove };
+  return { index, resolve, remove, invalidate: () => indexCache.invalidate() };
 }

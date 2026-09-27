@@ -67,6 +67,10 @@ module.exports = {
       max_restarts:  10,
       min_uptime:    "10s",
       restart_delay: 5000,
+      // Fastify's forceCloseConnections lets app.close() finish quickly, and
+      // index.ts's own 3s belt-and-braces exit backs it up — this only
+      // matters if both of those somehow stall.
+      kill_timeout:  8000,
 
       // ── Logging ──
       log_date_format: "YYYY-MM-DD HH:mm:ss",
@@ -75,13 +79,25 @@ module.exports = {
       merge_logs:      true,
 
       // ── Resource limits ──
-      max_memory_restart: "256M",
+      // 256M was tight enough for Node 20 + Fastify + the per-instance log
+      // tail + SSE buffers to drift past under normal load, producing a
+      // repeating "unreachable for ~5s, then healthy" cycle that looked like
+      // a wrapper bug but was PM2 doing exactly what it was configured to
+      // do. --max-old-space-size sits under the restart ceiling so the V8
+      // GC has a reason to collect before PM2 ever has a reason to kill.
+      max_memory_restart: "768M",
+      node_args: "--max-old-space-size=640",
 
       // ── Environment ──
       // CONFIG_FILE is resolved above and passed through automatically.
       // Add overrides or secrets here if not using api-server-config.json.
       env: {
         NODE_ENV: "development",
+        // Default 4 is shared by every fs.readFile/stat/readdir this process
+        // makes; a stats/backups/mods fan-out can starve /health's own
+        // filesystem read behind it. Above the default, still modest for a
+        // single-core-friendly VPS.
+        UV_THREADPOOL_SIZE: "8",
         // CONFIG_FILE: "/absolute/path/to/api-server-config.json",
       },
       env_production: {

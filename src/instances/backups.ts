@@ -4,11 +4,16 @@
 import fsp from "fs/promises";
 import path from "path";
 
+import { cached } from "../platform/cache.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { BackupDirInfo, BackupSummary } from "../contracts/wire.js";
 
+/** Tiers rotate hourly at the fastest; a minute-old summary is never stale in practice. */
+const SUMMARY_FRESH_MS = 60_000;
+const SUMMARY_STALE_MS = 600_000;
+
 export function createBackups(cfg: InstanceConfig) {
-async function getBackups(): Promise<BackupSummary> {
+async function loadBackups(): Promise<BackupSummary> {
   if (!cfg.backupsPath) return { dirs: [], totalBytes: 0 };
 
   const subdirs = [
@@ -62,6 +67,15 @@ async function getBackups(): Promise<BackupSummary> {
     totalBytes: dirs.reduce((sum, d) => sum + d.latestSizeBytes, 0),
   };
 }
+
+  const summaryCache = cached(loadBackups, {
+    freshMs: SUMMARY_FRESH_MS,
+    staleMs: SUMMARY_STALE_MS,
+  });
+
+  async function getBackups(): Promise<BackupSummary> {
+    return (await summaryCache.get()).value;
+  }
 
   return { getBackups };
 }

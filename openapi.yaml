@@ -420,6 +420,25 @@ paths:
                     example: [start, stop, restart, backup, status]
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /metrics:
+    get:
+      summary: Request counters, timings and process stats
+      description: >
+        Per-route request count/error count/timeout count and a p50/p95 from
+        a bounded sample, current and peak in-flight requests, cache hit/miss
+        counts, rate-limit rejections, RCON reconnect count, event-loop delay,
+        and process memory/uptime. Exists to answer what was happening right
+        before the wrapper became unreachable, since none of it was visible
+        before. Authenticated like every other route; exempt from both rate
+        limiters so a scrape interval can never starve itself.
+      responses:
+        "200":
+          description: A snapshot of the counters above.
+          content:
+            application/json:
+              schema: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /instances:
     get:
       summary: List configured instance ids
@@ -1202,6 +1221,27 @@ paths:
                   uuids:
                     type: array
                     items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/InstanceNotFound" }
+
+  /instances/{id}/stats/bulk:
+    get:
+      summary: Every player's stats in one response
+      description: >
+        Bounded server-side concurrency instead of the caller issuing one
+        request per uuid. Cached the same length as the bot's own
+        loadAllStats() TTL so the two never disagree.
+      parameters: [{ $ref: "#/components/parameters/InstanceId" }]
+      responses:
+        "200":
+          description: uuid -> stats file, for every uuid with a stats file.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stats]
+                properties:
+                  stats: { type: object }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/InstanceNotFound" }
 
