@@ -167,6 +167,17 @@ export function registerBackupFileRoutes(
       if (!found) return reply.status(404).send({ error: "Backup not found" });
 
       try {
+        // Replacing the world under a running server corrupts it. "offline" is
+        // the only state that proves no JVM holds the files; an unresponsive
+        // server is still a running one.
+        const { state } = await entry.getHealth();
+        if (state !== "offline") {
+          return reply.status(409).send({
+            error: "Server must be offline to restore a backup. Stop it first.",
+            state,
+          });
+        }
+
         // The path handed to the script is the one the wrapper resolved, never
         // one the client described. That is the whole reason restore is not a
         // /scripts/run action (see instances/restore.ts).

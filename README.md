@@ -157,7 +157,7 @@ All routes except `GET /health` require the `x-api-key` header. Error bodies are
 | `GET` | `/instances/:id/backups` | Backup tier metadata (counts and the newest archive per tier) |
 | `GET` | `/instances/:id/backups/files` | **Individual archives**, newest first, cursor-paged |
 | `GET` | `/instances/:id/backups/files/:fileId/download` | **Download one archive** — streamed, `Content-Length` set, `Range` supported |
-| `POST` | `/instances/:id/backups/files/:fileId/restore` | **Restore the world** from one archive (destructive) |
+| `POST` | `/instances/:id/backups/files/:fileId/restore` | **Restore the world** from one archive (destructive). Returns `409` unless the server is `offline` |
 | `GET` | `/instances/:id/capabilities` | Which setup-suite artifacts exist |
 | `GET` | `/instances/:id/logs/tail?lines=N` | Last N lines of `latest.log` (1–500) |
 | `GET` | `/instances/:id/logs/stream` | SSE stream of new log lines |
