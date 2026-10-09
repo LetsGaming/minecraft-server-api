@@ -11,6 +11,7 @@
 import { createReadStream } from "fs";
 import type { FastifyInstance } from "fastify";
 
+import type { ServerState } from "../../../contracts/wire.js";
 import { internalError } from "../../errors.js";
 import {
   INSTANCE_PREFIX as P,
@@ -170,7 +171,16 @@ export function registerBackupFileRoutes(
         // Replacing the world under a running server corrupts it. "offline" is
         // the only state that proves no JVM holds the files; an unresponsive
         // server is still a running one.
-        const { state } = await entry.getHealth();
+        // The cached health answer can be seconds stale, so this asks for a
+        // probe made now, and refuses when none can be completed.
+        let state: ServerState;
+        try {
+          ({ state } = await entry.getFreshHealth());
+        } catch {
+          return reply.status(503).send({
+            error: "Could not verify that the server is offline. Try again shortly.",
+          });
+        }
         if (state !== "offline") {
           return reply.status(409).send({
             error: "Server must be offline to restore a backup. Stop it first.",

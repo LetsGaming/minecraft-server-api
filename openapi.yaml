@@ -981,7 +981,7 @@ paths:
         "/" so a client can never hand a path to a spawned shell.
 
         The server must be offline: the route refuses with 409 while health
-        reports `online` or `unresponsive`, since a slow server is still a
+        reports `online` or `unresponsive` (checked with an uncached probe), since a slow server is still a
         running one. Stop the server first.
       parameters:
         - { $ref: "#/components/parameters/InstanceId" }
@@ -999,6 +999,8 @@ paths:
           description: No such instance, or no such archive.
         "409":
           description: The server is not offline. Body is `{ error, state }`.
+        "503":
+          description: A fresh health probe could not confirm the server is offline.
         "500":
           description: The restore script failed or timed out.
 

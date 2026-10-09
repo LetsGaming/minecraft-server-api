@@ -47,6 +47,8 @@ export const RCON_PROBE_TIMEOUT_MS = 2_500;
 /** A round-trip this recent is proof enough; skip the probe entirely. */
 export const RCON_TRUST_MS = 10_000;
 
+/** Budget for an uncached probe; past it the caller must assume the worst. */
+export const FRESH_PROBE_TIMEOUT_MS = 15_000;
 /** Below this age a health snapshot is served as-is. */
 export const HEALTH_FRESH_MS = 2_000;
 /** Above this age callers wait for a fresh probe instead of taking the old one. */
@@ -186,6 +188,8 @@ interface Probe {
 export interface HealthMonitor {
   /** Current health, cached and single-flighted (see cache.ts). */
   get(): Promise<InstanceHealth>;
+  /** An uncached probe made now; rejects if it cannot finish in time. */
+  getFresh(): Promise<InstanceHealth>;
   /**
    * The player list, from the same round-trip the health probe makes.
    * A server that has stopped answering keeps its last known roster for
@@ -289,6 +293,29 @@ export function createHealthMonitor(
       // Report how old the answer is rather than hiding it — a caller that
       // cares (an alerting loop) can weigh a 15-second-old snapshot itself.
       return { ...value.health, ageMs: Math.max(Date.now() - at, 0) };
+    },
+
+    /**
+     * A probe run right now, never served from or written to the cache. For
+     * decisions that destroy data: a cached "offline" can be up to
+     * HEALTH_STALE_MS old, long enough for a server to have started since.
+     * Rejects if the probe does not finish within FRESH_PROBE_TIMEOUT_MS, so
+     * callers fail closed.
+     */
+    async getFresh(): Promise<InstanceHealth> {
+      let timer: NodeJS.Timeout | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("health probe timed out")),
+          FRESH_PROBE_TIMEOUT_MS,
+        );
+      });
+      try {
+        const { health } = await Promise.race([probe(), deadline]);
+        return { ...health, ageMs: 0 };
+      } finally {
+        clearTimeout(timer);
+      }
     },
 
     async getList(): Promise<PlayerList> {

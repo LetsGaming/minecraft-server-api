@@ -21,7 +21,7 @@ semver.
 
 ### Fixed
 
-- `POST /instances/:id/backups/files/:fileId/restore` now answers `409` with `{ error, state }` unless instance health reports `offline` (`online` and `unresponsive` both refuse), instead of running `restore.sh` against a live world. Touched: `src/http/routes/instance/backups.ts`, `openapi.yaml`, `tests/http/backupRestore.test.ts`.
+- `POST /instances/:id/backups/files/:fileId/restore` now answers `409` with `{ error, state }` unless instance health reports `offline` (`online` and `unresponsive` both refuse) using a fresh, uncached probe, and `503` when that probe cannot complete, instead of running `restore.sh` against a live world. Touched: `src/http/routes/instance/backups.ts`, `openapi.yaml`, `tests/http/backupRestore.test.ts`.
 - A sustained RCON outage had no backoff: every failed `send()` retried a full TCP connect + up to a 10s auth timeout on the very next call, and a burst of concurrent `/command` requests during that window could each hold a request open for up to 25s (the auth timeout plus the `screen stuff` fallback). The RCON client now fails fast for 2s after a failed connect instead.
 - `AuthFailTracker` (the auth-failure rate limiter) never evicted an IP once tracked, growing forever under a scanner hitting many source addresses. It now sweeps aged-out entries once past 10,000 tracked IPs.
 - `logStream.ts`'s per-instance 1s log-tail poller used synchronous `fs` calls on the event loop and ran its full read-and-broadcast work every tick regardless of whether any SSE client was attached to that instance; it now uses async `fs` calls and skips straight to tracking the read offset when nobody is watching.

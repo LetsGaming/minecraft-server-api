@@ -13,7 +13,12 @@ import type { ServerState } from "../../src/contracts/wire.js";
 const FILE_ID = "A".repeat(22);
 const RESTORE_URL = `/instances/survival/backups/files/${FILE_ID}/restore`;
 
-function build(opts: { state: ServerState | "throw"; found?: boolean }) {
+function build(opts: {
+  state: ServerState | "throw";
+  /** What the cached health answer claims; defaults to a stale "offline". */
+  cached?: ServerState;
+  found?: boolean;
+}) {
   const restore = vi.fn(async (_abs: string) => ({
     success: true,
     exitCode: 0,
@@ -21,7 +26,8 @@ function build(opts: { state: ServerState | "throw"; found?: boolean }) {
     stderr: "",
   }));
   const entry = {
-    getHealth: vi.fn(async () => {
+    getHealth: vi.fn(async () => ({ state: opts.cached ?? "offline" })),
+    getFreshHealth: vi.fn(async () => {
       if (opts.state === "throw") throw new Error("probe exploded");
       return { state: opts.state };
     }),
@@ -71,10 +77,18 @@ describe("restore route online guard", () => {
     expect(restore).not.toHaveBeenCalled();
   });
 
-  it("500s without running the script when the health probe fails", async () => {
-    const { app, restore } = build({ state: "throw" });
+  it("trusts the fresh probe over a stale cached offline", async () => {
+    const { app, restore } = build({ state: "online", cached: "offline" });
     const res = await app.inject({ method: "POST", url: RESTORE_URL });
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(409);
+    expect(restore).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with 503 when the fresh probe cannot complete", async () => {
+    const { app, restore } = build({ state: "throw", cached: "offline" });
+    const res = await app.inject({ method: "POST", url: RESTORE_URL });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error).toMatch(/Could not verify/);
     expect(restore).not.toHaveBeenCalled();
   });
 
