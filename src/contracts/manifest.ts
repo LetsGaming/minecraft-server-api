@@ -177,9 +177,14 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "action: the path is resolved here, never sent by the client.",
   },
   "rcon-command": {
-    version: 1,
+    // v2: the reply carries `via` and `sent`, and a command neither RCON nor
+    // the screen fallback delivered is a 502 instead of `200 {result:null}`.
+    // `result` is unchanged, so a v1 reader still works.
+    version: 2,
     routes: ["POST /instances/:id/command"],
-    summary: "Running a console command on the server.",
+    summary:
+      "Running a console command on the server, reporting which channel " +
+      "carried it and failing when none did.",
   },
   scripts: {
     version: 1,

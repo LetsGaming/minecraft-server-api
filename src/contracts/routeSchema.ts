@@ -70,6 +70,7 @@ const ERROR_DESCRIPTIONS: Record<number, string> = {
   416: "Range not satisfiable",
   428: "Precondition required",
   500: "Internal server error",
+  502: "Command could not be delivered",
   503: "Unavailable",
 };
 

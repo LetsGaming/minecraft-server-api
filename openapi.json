@@ -718,6 +718,16 @@
                 }
               }
             }
+          },
+          "502": {
+            "description": "Command could not be delivered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -3470,15 +3480,30 @@
       },
       "CommandResult": {
         "type": "object",
-        "description": "The console's reply. `null` when the command went through the screen fallback, which has no reply channel.",
+        "description": "`via` names the channel that carried the command. `result` is the console's reply, or `null` over the screen fallback, which has no reply channel. `rconError` is set when RCON failed and the screen fallback was used instead. A command neither channel could deliver is a 502, never a 200.",
         "properties": {
           "result": {
             "type": "string",
             "nullable": true
+          },
+          "via": {
+            "type": "string",
+            "enum": [
+              "rcon",
+              "screen"
+            ]
+          },
+          "sent": {
+            "type": "boolean"
+          },
+          "rconError": {
+            "type": "string"
           }
         },
         "required": [
-          "result"
+          "result",
+          "via",
+          "sent"
         ],
         "additionalProperties": false
       },

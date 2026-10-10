@@ -182,7 +182,7 @@ All routes except `GET /health` require the `x-api-key` header. Error bodies are
 | `GET` | `/instances/:id/stats/bulk` | Every player's stats in one response |
 | `GET` | `/instances/:id/stats/:uuid` | Stats JSON for one player |
 | `DELETE` | `/instances/:id/stats/:uuid` | Delete a player's stats file (bot `/server prune-stats`) |
-| `POST` | `/instances/:id/command` | Send a console command (RCON, screen fallback) |
+| `POST` | `/instances/:id/command` | Send a console command (RCON, screen fallback); replies `{ result, via, sent }`, 502 when undeliverable |
 | `POST` | `/instances/:id/scripts/run` | Run a management script (`start`, `stop`, `restart`, `rollback`, `backup`, `status`) |
 
 ### Compatibility with minecraft-bot
