@@ -62,6 +62,8 @@ const configFile: W.ConfigFileInfo = {
   relPath: "config/jei.toml",
   modId: "jei",
   format: "toml",
+  editable: true,
+  tooLarge: false,
   sizeBytes: 5,
   mtimeMs: 1700000000000.25,
 };
@@ -141,7 +143,11 @@ const cases: Array<[string, S.JsonSchema, unknown]> = [
     S.ScriptResult,
     { output: "out", stderr: "", exitCode: null } satisfies W.ScriptResult,
   ],
-  ["ConfigFileIndex", S.ConfigFileIndex, { files: [configFile] }],
+  [
+    "ConfigFileIndex",
+    S.ConfigFileIndex,
+    { files: [configFile], truncated: false } satisfies W.ConfigFileIndex,
+  ],
   [
     "ConfigFileRead",
     S.ConfigFileRead,

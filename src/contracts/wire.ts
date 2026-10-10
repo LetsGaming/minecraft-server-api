@@ -39,9 +39,19 @@ export interface ConfigFileInfo {
   relPath: string;
   /** Best guess at the owning mod; a grouping hint, not an identity. */
   modId: string;
+  /** File type by extension: toml, json, json5, properties, cfg, conf, ini, yaml, text or snbt. */
   format: string;
+  /** False when the file is listed but cannot be read or written. */
+  editable: boolean;
+  tooLarge: boolean;
   sizeBytes: number;
   mtimeMs: number;
+}
+
+export interface ConfigFileIndex {
+  files: ConfigFileInfo[];
+  /** The listing was cut at the file limit; some files are missing. */
+  truncated: boolean;
 }
 
 export interface ConfigFileRead {

@@ -27,6 +27,7 @@ unchanged.
 
 - **Bulk player stats** (`stats-bulk` manifest feature, v1): `GET /instances/:id/stats/bulk` returns every player's stats file in one response, bounded to 8 concurrent reads server-side. Replaces the pattern of one HTTP request per lifetime player a leaderboard build used to make against this wrapper — on a server with a few hundred players who have ever joined, that was a few hundred simultaneous requests landing on a 4-thread filesystem pool and a shared rate-limit budget at once. Cached 30s/300s, same as the bot's own `loadAllStats()` TTL.
 - **`GET /metrics`** (authenticated, exempt from rate limiting): per-route request count/p50/p95/error/timeout, current and peak in-flight requests, cache hit/miss counts, rate-limit rejections, RCON reconnect count, event-loop delay, and process memory/uptime. There was previously no way to answer what the wrapper was doing right before it became briefly unreachable.
+- **Mod config index lists more files and says when it is incomplete.** `GET /instances/:id/configs` now returns every text config file under the roots (`.toml`, `.json`, `.json5`, `.properties`, `.cfg`, `.conf`, `.ini`, `.yml`, `.yaml`, `.txt`, `.snbt`), walks eight levels deep instead of three, skips cache, backup, log, `.git` and `node_modules` directories, follows symlinks only when they stay inside their config root, and caps the listing at 2000 files with `truncated: true`. Each entry gains `editable` and `tooLarge`; files over the 1 MB cap are listed as too large instead of vanishing. A UTF-8 BOM is hidden from the client and kept on write. Touched: `src/instances/configFiles.ts`, `src/contracts/{schemas,wire}.ts`, `openapi.json`.
 
 ### Changed
 
@@ -52,6 +53,9 @@ unchanged.
 
 ### Fixed
 
+- **Saving a config above 4 KB failed with 413.** The global 4 KB body limit applied to `PUT /instances/:id/configs/:fileId`, so most real mod configs could not be saved. That route now accepts bodies up to twice the 1 MB config cap plus headroom; the writer still enforces the cap on the text itself and answers 413 when it is exceeded.
+- Config files in nested mod folders (`config/xaero/minimap/settings.json`) are grouped under the folder's mod instead of the filename.
+- The config index is reused for five seconds per instance and dropped on every write, instead of walking the tree for every read and write.
 - `POST /instances/:id/backups/files/:fileId/restore` now answers `409` with `{ error, state }` unless instance health reports `offline` (`online` and `unresponsive` both refuse) using a fresh, uncached probe, and `503` when that probe cannot complete, instead of running `restore.sh` against a live world. Touched: `src/http/routes/instance/backups.ts`, `tests/http/backupRestore.test.ts`.
 - RCON: the 10 s authentication timer stayed armed after a socket error or close and later tore down whatever newer, healthy connection existed, which showed up as flapping after an outage. The timer is now cleared on cleanup, and an authentication timeout reports `RCON auth timeout`.
 - Log streaming: a read window ending mid-line (the 1 MB clamp, or the server between two writes of one line) emitted a truncated line and then a bogus second one, which the chat bridge parsed. Only complete lines are sent now; the remainder is read on the next pass.
