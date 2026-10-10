@@ -85,7 +85,7 @@ describe("POST /mods/compat", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("maps a missing manifest to 404 and too many jobs to 503", async () => {
+  it("maps a missing manifest to 404 and too many jobs to 429", async () => {
     const missing = build({
       startModCompat: vi.fn(async () => {
         throw new CompatManifestMissingError();
@@ -97,7 +97,7 @@ describe("POST /mods/compat", () => {
         throw new CompatBusyError();
       }),
     });
-    expect((await post(busy.app, { mcVersion: "1.21.5" })).statusCode).toBe(503);
+    expect((await post(busy.app, { mcVersion: "1.21.5" })).statusCode).toBe(429);
   });
 
   it("500s on an unexpected failure", async () => {

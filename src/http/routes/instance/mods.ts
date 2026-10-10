@@ -313,7 +313,7 @@ export function registerModRoutes(
       params: instanceParams(),
       querystring: queryParams({ refresh: "`1` skips the cached answer." }),
       requestBody: { required: true, schema: ModCompatRequest },
-      response: { 202: ModCompatStarted, ...errors(400, 404, 500, 503) },
+      response: { 202: ModCompatStarted, ...errors(400, 404, 429, 500) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
@@ -331,7 +331,7 @@ export function registerModRoutes(
           return reply.status(404).send({ error: err.message });
         }
         if (err instanceof CompatBusyError) {
-          return reply.status(503).send({ error: err.message });
+          return reply.status(429).send({ error: err.message });
         }
         return internalError(reply, `mods/compat ${req.params.id}`, err);
       }

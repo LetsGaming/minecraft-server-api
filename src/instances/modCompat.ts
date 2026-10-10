@@ -28,6 +28,28 @@ export const COMPAT_CACHE_TTL_MS = 6 * 60 * 60_000;
 export const COMPAT_JOB_RETENTION_MS = 15 * 60_000;
 export const COMPAT_MAX_JOBS = 30;
 export const COMPAT_MAX_RUNNING = 3;
+export const COMPAT_MAX_RUNNING_GLOBAL = 6;
+export const COMPAT_REFRESH_MIN_MS = 30_000;
+
+/** Running-job slots shared by every instance of one wrapper process. */
+export interface CompatSlots {
+  tryAcquire(): boolean;
+  release(): void;
+}
+
+export function createCompatSlots(limit: number): CompatSlots {
+  let used = 0;
+  return {
+    tryAcquire() {
+      if (used >= limit) return false;
+      used++;
+      return true;
+    },
+    release() {
+      used = Math.max(0, used - 1);
+    },
+  };
+}
 const COMPAT_MAX_CACHE_ENTRIES = 20;
 const CDN_HOST = "cdn.modrinth.com";
 
@@ -42,6 +64,8 @@ export interface ModCompatDeps {
   /** One check-updates.js run for a single slug; resolves to its parsed JSON. */
   checkOne(slug: string, mcVersion: string): Promise<unknown>;
   now?: () => number;
+  /** Process-wide cap on running jobs; absent means only the per-instance cap applies. */
+  slots?: CompatSlots;
 }
 
 export class CompatManifestMissingError extends Error {
@@ -51,8 +75,8 @@ export class CompatManifestMissingError extends Error {
 }
 
 export class CompatBusyError extends Error {
-  constructor() {
-    super("Too many compatibility checks are running");
+  constructor(message = "Too many compatibility checks are running") {
+    super(message);
   }
 }
 
@@ -182,6 +206,7 @@ export function createModCompat(deps: ModCompatDeps) {
   const jobs = new Map<string, Job>();
   const cache = new Map<string, { result: ModCompatResult; at: number }>();
   let generation = 0;
+  const lastStarted = new Map<string, number>();
 
   function sweep(): void {
     const t = now();
@@ -342,11 +367,22 @@ export function createModCompat(deps: ModCompatDeps) {
         return { jobId: job.id };
       }
 
+      const startedAt = lastStarted.get(mcVersion);
+      if (options.refresh && startedAt !== undefined && now() - startedAt < COMPAT_REFRESH_MIN_MS) {
+        throw new CompatBusyError("This version was checked a moment ago. Wait before refreshing.");
+      }
       const running = [...jobs.values()].filter((j) => j.state === "running").length;
       if (running >= COMPAT_MAX_RUNNING) throw new CompatBusyError();
+      if (deps.slots && !deps.slots.tryAcquire()) throw new CompatBusyError();
 
+      lastStarted.set(mcVersion, now());
+      while (lastStarted.size > COMPAT_MAX_CACHE_ENTRIES) {
+        lastStarted.delete(lastStarted.keys().next().value as string);
+      }
       const job = newJob(key, mcVersion, installed.modLoader, installed.mods.length);
-      void run(job, installed).catch((err: unknown) => {
+      void run(job, installed)
+        .finally(() => deps.slots?.release())
+        .catch((err: unknown) => {
         log.error(
           "mods",
           `compat: job failed ${logFields({ job: job.id, mcVersion: job.mcVersion, detail: err instanceof Error ? err.message : err })}`,

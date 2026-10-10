@@ -26,7 +26,13 @@ import path from "path";
 import { cached } from "../platform/cache.js";
 import { createMutex, mapLimit } from "../platform/concurrency.js";
 import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
-import { createModCompat } from "./modCompat.js";
+import {
+  COMPAT_MAX_RUNNING_GLOBAL,
+  createCompatSlots,
+  createModCompat,
+} from "./modCompat.js";
+
+const compatSlots = createCompatSlots(COMPAT_MAX_RUNNING_GLOBAL);
 
 /** Above the 4-thread libuv pool, low enough to leave it room for other work. */
 const EXISTS_CONCURRENCY = 8;
@@ -280,6 +286,7 @@ export function createMods(cfg: InstanceConfig) {
   }
 
   const modCompat = createModCompat({
+    slots: compatSlots,
     async readInstalled() {
       const manifest = await readManifest();
       if (!manifest) return null;

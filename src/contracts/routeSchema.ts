@@ -69,6 +69,7 @@ const ERROR_DESCRIPTIONS: Record<number, string> = {
   413: "Payload too large",
   416: "Range not satisfiable",
   428: "Precondition required",
+  429: "Too many requests",
   500: "Internal server error",
   503: "Unavailable",
 };

@@ -4,6 +4,9 @@ import {
   COMPAT_CACHE_TTL_MS,
   COMPAT_CONCURRENCY,
   COMPAT_JOB_RETENTION_MS,
+  COMPAT_MAX_JOBS,
+  COMPAT_REFRESH_MIN_MS,
+  createCompatSlots,
   COMPAT_MAX_RUNNING,
   CompatBusyError,
   CompatManifestMissingError,
@@ -292,6 +295,7 @@ describe("createModCompat", () => {
     it("refresh bypasses it", async () => {
       await finished(compat, (await compat.start("1.21.5")).jobId);
       checkOne.mockClear();
+      clock += COMPAT_REFRESH_MIN_MS + 1;
       await finished(compat, (await compat.start("1.21.5", { refresh: true })).jobId);
       expect(checkOne).toHaveBeenCalledTimes(3);
     });
@@ -330,6 +334,61 @@ describe("createModCompat", () => {
       );
       await finished(compat, (await compat.start("1.21.5")).jobId);
       expect(checkOne).toHaveBeenCalledTimes(3);
+    });
+  });
+
+
+  describe("resource caps", () => {
+    it("shares a process-wide running limit across instances", async () => {
+      const slots = createCompatSlots(2);
+      checkOne.mockImplementation(() => new Promise(() => undefined));
+      const mk = () => createModCompat({ readInstalled: async () => snapshot, checkOne, slots });
+      const a = mk();
+      const b = mk();
+      await a.start("1.1");
+      await b.start("1.2");
+      await expect(a.start("1.3")).rejects.toBeInstanceOf(CompatBusyError);
+      await expect(b.start("1.4")).rejects.toBeInstanceOf(CompatBusyError);
+    });
+
+    it("frees a slot when a job finishes", async () => {
+      const slots = createCompatSlots(1);
+      const one = createModCompat({ readInstalled: async () => snapshot, checkOne, slots });
+      await finished(one, (await one.start("1.1")).jobId);
+      await expect(one.start("1.2")).resolves.toBeDefined();
+    });
+
+    it("cycling through many distinct versions never runs more than the per-instance cap", async () => {
+      checkOne.mockImplementation(() => new Promise(() => undefined));
+      let accepted = 0;
+      for (let i = 0; i < 50; i++) {
+        try {
+          await compat.start("1." + i);
+          accepted++;
+        } catch (err) {
+          expect(err).toBeInstanceOf(CompatBusyError);
+        }
+      }
+      expect(accepted).toBe(COMPAT_MAX_RUNNING);
+    });
+
+    it("rate limits refresh per version", async () => {
+      await finished(compat, (await compat.start("1.21.5")).jobId);
+      await expect(compat.start("1.21.5", { refresh: true })).rejects.toBeInstanceOf(CompatBusyError);
+      clock += COMPAT_REFRESH_MIN_MS + 1;
+      await expect(compat.start("1.21.5", { refresh: true })).resolves.toBeDefined();
+    });
+
+    it("keeps the number of remembered jobs bounded when starts are answered from the cache", async () => {
+      const first = await compat.start("1.21.5");
+      await finished(compat, first.jobId);
+      const ids: string[] = [];
+      for (let i = 0; i < COMPAT_MAX_JOBS * 3; i++) {
+        ids.push((await compat.start("1.21.5")).jobId);
+        clock += 1;
+      }
+      const alive = ids.filter((id) => compat.get(id) !== null).length;
+      expect(alive).toBeLessThanOrEqual(COMPAT_MAX_JOBS);
     });
   });
 

@@ -2207,7 +2207,7 @@
             }
           },
           "429": {
-            "description": "Rate limited",
+            "description": "Too many requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -2218,16 +2218,6 @@
           },
           "500": {
             "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Unavailable",
             "content": {
               "application/json": {
                 "schema": {
