@@ -34,6 +34,7 @@ interface ManifestBody {
   routes: string[];
   features: Record<string, { version: number; summary: string }>;
   scriptActions: string[];
+  scriptTimeoutsMs: Record<string, number>;
 }
 
 beforeAll(async () => {
@@ -104,6 +105,13 @@ describe("GET /manifest", () => {
   it("reports the script actions the runner actually accepts", async () => {
     const body = await getManifest();
     expect(body.scriptActions).toEqual(Object.keys(SCRIPT_MAP).sort());
+  });
+
+  it("advertises a timeout for every script action, long enough for stop and restart", async () => {
+    const body = await getManifest();
+    expect(Object.keys(body.scriptTimeoutsMs).sort()).toEqual(body.scriptActions);
+    expect(body.scriptTimeoutsMs.stop).toBeGreaterThanOrEqual(180_000);
+    expect(body.scriptTimeoutsMs.restart).toBeGreaterThanOrEqual(180_000);
   });
 
   it("carries a version and a summary for every feature", async () => {

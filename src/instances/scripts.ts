@@ -37,10 +37,18 @@ export const SCRIPT_MAP: Record<string, string> = {
   status: "misc/status.sh",
 };
 
-const SCRIPT_TIMEOUTS: Record<string, number> = {
+/**
+ * Per-action ceilings, advertised in the manifest so a caller can wait at
+ * least as long as the wrapper does. Stop and restart are long on purpose:
+ * the scripts warn players and sleep before saving (shutdown.sh: 25 s, then a
+ * 5 s countdown), wait up to 60 s for the save to land, and then ask systemd
+ * to stop or restart the unit. A kill that lands after save-off but before
+ * save-on leaves the world not saving, which is worse than waiting.
+ */
+export const SCRIPT_TIMEOUTS: Record<string, number> = {
   start: 30_000,
-  stop: 60_000,
-  restart: 60_000,
+  stop: 240_000,
+  restart: 420_000,
   rollback: 300_000,
   // 600s, not 300s. A large modded world takes longer than five minutes to
   // archive, and the timeout does not just give up: it SIGTERMs the process

@@ -418,6 +418,15 @@ paths:
                     type: array
                     items: { type: string }
                     example: [start, stop, restart, backup, status]
+                  scriptTimeoutsMs:
+                    type: object
+                    description: >-
+                      Milliseconds the wrapper lets each script action run
+                      before killing it. A caller's own request timeout for
+                      `POST /instances/{id}/scripts/run` should be at least
+                      this value for the action it runs.
+                    additionalProperties: { type: integer }
+                    example: { start: 30000, stop: 240000, restart: 420000, backup: 600000 }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /metrics:

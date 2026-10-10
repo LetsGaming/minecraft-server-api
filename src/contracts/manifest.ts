@@ -17,7 +17,7 @@
  * what this process actually serves; `openapi.yaml` is checked against it in
  * CI instead of being trusted.
  */
-import { SCRIPT_MAP } from "../instances/scripts.js";
+import { SCRIPT_MAP, SCRIPT_TIMEOUTS } from "../instances/scripts.js";
 import { WRAPPER_VERSION } from "./version.js";
 
 /**
@@ -205,6 +205,8 @@ export interface Manifest {
   routes: string[];
   features: Record<string, { version: number; summary: string }>;
   scriptActions: string[];
+  /** Milliseconds the wrapper lets each script action run before killing it. */
+  scriptTimeoutsMs: Record<string, number>;
 }
 
 /**
@@ -225,5 +227,8 @@ export function buildManifest(routes: readonly string[]): Manifest {
     routes: [...routes].sort(),
     features,
     scriptActions: Object.keys(SCRIPT_MAP).sort(),
+    scriptTimeoutsMs: Object.fromEntries(
+      Object.keys(SCRIPT_MAP).map((action) => [action, SCRIPT_TIMEOUTS[action] ?? 120_000]),
+    ),
   };
 }

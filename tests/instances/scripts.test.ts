@@ -53,6 +53,8 @@ describe("runScript", () => {
       await scripts.runScript(action);
       timeouts[action] = runMock.mock.calls.at(-1)![2].timeoutMs;
     }
+    expect(timeouts.stop).toBe(240_000);
+    expect(timeouts.restart).toBe(420_000);
     expect(timeouts.backup).toBe(600_000);
     expect(timeouts.rollback).toBe(300_000);
     expect(timeouts.status).toBe(15_000);
