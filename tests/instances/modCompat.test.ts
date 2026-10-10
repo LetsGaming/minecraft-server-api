@@ -372,6 +372,44 @@ describe("createModCompat", () => {
       expect(accepted).toBe(COMPAT_MAX_RUNNING);
     });
 
+    it("concurrent starts hold the per-instance cap exactly", async () => {
+      checkOne.mockImplementation(() => new Promise(() => undefined));
+      const results = await Promise.allSettled(
+        Array.from({ length: 40 }, (_v, i) => compat.start("1." + (i % 10))),
+      );
+      const ids = new Set(
+        results.flatMap((r) => (r.status === "fulfilled" ? [r.value.jobId] : [])),
+      );
+      expect(ids.size).toBe(COMPAT_MAX_RUNNING);
+      for (const r of results) {
+        if (r.status === "rejected") expect(r.reason).toBeInstanceOf(CompatBusyError);
+      }
+    });
+
+    it("concurrent starts across instances hold the shared cap exactly", async () => {
+      const slots = createCompatSlots(4);
+      checkOne.mockImplementation(() => new Promise(() => undefined));
+      const instances = Array.from({ length: 5 }, () =>
+        createModCompat({ readInstalled: async () => snapshot, checkOne, slots }),
+      );
+      const results = await Promise.allSettled(
+        instances.flatMap((inst, i) => [inst.start("1." + i), inst.start("2." + i)]),
+      );
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(4);
+    });
+
+    it("concurrent refreshes of one version start one job", async () => {
+      await finished(compat, (await compat.start("1.21.5")).jobId);
+      clock += COMPAT_REFRESH_MIN_MS + 1;
+      checkOne.mockClear();
+      checkOne.mockImplementation(() => new Promise(() => undefined));
+      const results = await Promise.allSettled(
+        Array.from({ length: 10 }, () => compat.start("1.21.5", { refresh: true })),
+      );
+      expect(new Set(results.flatMap((r) => (r.status === "fulfilled" ? [r.value.jobId] : []))).size).toBe(1);
+      await vi.waitFor(() => expect(checkOne).toHaveBeenCalledTimes(3));
+    });
+
     it("rate limits refresh per version", async () => {
       await finished(compat, (await compat.start("1.21.5")).jobId);
       await expect(compat.start("1.21.5", { refresh: true })).rejects.toBeInstanceOf(CompatBusyError);
