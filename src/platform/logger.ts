@@ -16,8 +16,31 @@ function ts(): string {
   );
 }
 
+const LOG_VALUE_MAX = 500;
+const LOG_LINE_MAX = 4000;
+
+/**
+ * Makes untrusted text safe to put in a log line: CR, LF, tab, ESC and every
+ * other control character become visible escapes (so input cannot forge a
+ * second line or drive a terminal), and the length is capped.
+ */
+export function logSafe(value: unknown, max = LOG_VALUE_MAX): string {
+  const text =
+    typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
+  const escaped = text.replace(
+    /[\u0000-\u001f\u007f-\u009f]/g,
+    (c) => {
+      if (c === "\n") return "\\n";
+      if (c === "\r") return "\\r";
+      if (c === "\t") return "\\t";
+      return "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0");
+    },
+  );
+  return escaped.length > max ? escaped.slice(0, max) + "..." : escaped;
+}
+
 function emit(level: Level, scope: string, msg: string): void {
-  const line = `[${ts()}] [${level}] [${scope}] ${msg}`;
+  const line = `[${ts()}] [${level}] [${scope}] ${logSafe(msg, LOG_LINE_MAX)}`;
   // eslint-disable-next-line no-console
   if (level === "ERROR" || level === "WARN") console.error(line);
   // eslint-disable-next-line no-console
