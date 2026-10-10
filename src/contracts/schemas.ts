@@ -524,6 +524,85 @@ export const ModUpdateCheck = named(
   ),
 );
 
+export const ModCompatMod = named(
+  "ModCompatMod",
+  object(
+    {
+      slug: string,
+      name: string,
+      availability: {
+        type: "string",
+        enum: ["available", "unavailable", "unknown"],
+      },
+      currentVersionId: string,
+      target: object(
+        {
+          versionId: string,
+          versionName: string,
+          datePublished: string,
+          downloadUrl: string,
+        },
+        { required: ["versionId", "versionName", "datePublished"] },
+      ),
+      reason: string,
+    },
+    { required: ["slug", "availability"] },
+  ),
+);
+
+export const ModCompatStarted = named(
+  "ModCompatStarted",
+  object({ jobId: string }, { description: "The job to poll for the result." }),
+);
+
+export const ModCompatJob = named(
+  "ModCompatJob",
+  object(
+    {
+      jobId: string,
+      state: { type: "string", enum: ["running", "done", "failed"] },
+      mcVersion: string,
+      modLoader: nullable(string),
+      progress: object({ done: integer, total: integer }),
+      partial: {
+        ...array(ModCompatMod),
+        description: "Results so far while running; empty once finished.",
+      },
+      checkedAt: { ...number, description: "Epoch ms. Set once done." },
+      complete: {
+        ...boolean,
+        description:
+          "True when every mod got a definitive answer (no `unknown`). Set once done.",
+      },
+      summary: object({
+        available: integer,
+        unavailable: integer,
+        unknown: integer,
+        total: integer,
+      }),
+      mods: array(ModCompatMod),
+      error: { ...string, description: "Why a failed job failed." },
+    },
+    {
+      required: ["jobId", "state", "mcVersion", "modLoader", "progress", "partial"],
+      description:
+        "A mod compatibility check. `checkedAt`, `complete`, `summary` and " +
+        "`mods` are present once `state` is `done`; `error` when it is `failed`.",
+    },
+  ),
+);
+
+export const ModCompatRequest = named(
+  "ModCompatRequest",
+  object(
+    {
+      mcVersion: string,
+      refresh: { ...boolean, description: "Skip the cached answer." },
+    },
+    { required: ["mcVersion"] },
+  ),
+);
+
 // ── Control ──────────────────────────────────────────────────────────────
 
 export const CommandResult = named(

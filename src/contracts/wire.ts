@@ -267,6 +267,51 @@ export interface ModUpdateCheck {
   results: Array<{ slug: string; status: string; [key: string]: unknown }>;
 }
 
+export type ModCompatAvailability = "available" | "unavailable" | "unknown";
+
+export interface ModCompatMod {
+  slug: string;
+  name?: string;
+  availability: ModCompatAvailability;
+  currentVersionId?: string;
+  target?: {
+    versionId: string;
+    versionName: string;
+    datePublished: string;
+    downloadUrl?: string;
+  };
+  reason?: string;
+}
+
+export interface ModCompatResult {
+  mcVersion: string;
+  modLoader: string | null;
+  checkedAt: number;
+  complete: boolean;
+  summary: {
+    available: number;
+    unavailable: number;
+    unknown: number;
+    total: number;
+  };
+  mods: ModCompatMod[];
+}
+
+export interface ModCompatStarted {
+  jobId: string;
+}
+
+/** A mod compatibility check; the final fields appear once `state` is `done`. */
+export interface ModCompatJob extends Partial<ModCompatResult> {
+  jobId: string;
+  state: "running" | "done" | "failed";
+  mcVersion: string;
+  modLoader: string | null;
+  progress: { done: number; total: number };
+  partial: ModCompatMod[];
+  error?: string;
+}
+
 export interface ModApplyResult {
   ok: boolean;
   updated?: Array<{

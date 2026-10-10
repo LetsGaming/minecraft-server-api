@@ -2142,6 +2142,190 @@
         }
       }
     },
+    "/instances/{id}/mods/compat": {
+      "post": {
+        "operationId": "postInstancesByIdModsCompat",
+        "summary": "Start a mod compatibility check for a Minecraft version",
+        "description": "Checks every installed mod for a release on `mcVersion` and the installed loader, in the background. One job runs per version: a second request returns the running job. A finished answer is reused for six hours unless `refresh` is set (body or `?refresh=1`) or a mod changed.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`1` skips the cached answer."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModCompatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModCompatStarted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/mods/compat/{jobId}": {
+      "get": {
+        "operationId": "getInstancesByIdModsCompatByJobId",
+        "summary": "Progress and result of a mod compatibility check",
+        "description": "Finished jobs are kept for about 15 minutes; after that the job id is unknown (404) and the check can be started again.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Job id from the start request."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModCompatJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/instances/{id}/mods/installed": {
       "get": {
         "operationId": "getInstancesByIdModsInstalled",
@@ -4244,6 +4428,186 @@
           "ok"
         ],
         "additionalProperties": true
+      },
+      "ModCompatJob": {
+        "type": "object",
+        "description": "A mod compatibility check. `checkedAt`, `complete`, `summary` and `mods` are present once `state` is `done`; `error` when it is `failed`.",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "done",
+              "failed"
+            ]
+          },
+          "mcVersion": {
+            "type": "string"
+          },
+          "modLoader": {
+            "type": "string",
+            "nullable": true
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "done": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "done",
+              "total"
+            ],
+            "additionalProperties": false
+          },
+          "partial": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModCompatMod"
+            },
+            "description": "Results so far while running; empty once finished."
+          },
+          "checkedAt": {
+            "type": "number",
+            "description": "Epoch ms. Set once done."
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "True when every mod got a definitive answer (no `unknown`). Set once done."
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "type": "integer"
+              },
+              "unavailable": {
+                "type": "integer"
+              },
+              "unknown": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "available",
+              "unavailable",
+              "unknown",
+              "total"
+            ],
+            "additionalProperties": false
+          },
+          "mods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModCompatMod"
+            }
+          },
+          "error": {
+            "type": "string",
+            "description": "Why a failed job failed."
+          }
+        },
+        "required": [
+          "jobId",
+          "state",
+          "mcVersion",
+          "modLoader",
+          "progress",
+          "partial"
+        ],
+        "additionalProperties": false
+      },
+      "ModCompatMod": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable",
+              "unknown"
+            ]
+          },
+          "currentVersionId": {
+            "type": "string"
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "type": "string"
+              },
+              "versionName": {
+                "type": "string"
+              },
+              "datePublished": {
+                "type": "string"
+              },
+              "downloadUrl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "versionId",
+              "versionName",
+              "datePublished"
+            ],
+            "additionalProperties": false
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "availability"
+        ],
+        "additionalProperties": false
+      },
+      "ModCompatRequest": {
+        "type": "object",
+        "properties": {
+          "mcVersion": {
+            "type": "string"
+          },
+          "refresh": {
+            "type": "boolean",
+            "description": "Skip the cached answer."
+          }
+        },
+        "required": [
+          "mcVersion"
+        ],
+        "additionalProperties": false
+      },
+      "ModCompatStarted": {
+        "type": "object",
+        "description": "The job to poll for the result.",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId"
+        ],
+        "additionalProperties": false
       },
       "ModRemoveResult": {
         "type": "object",

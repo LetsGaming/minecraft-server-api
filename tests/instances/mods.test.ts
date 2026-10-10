@@ -261,3 +261,72 @@ describe("manifest reads and cache invalidation", () => {
     expect((await mods.listInstalled())!.mods).toHaveLength(1);
   });
 });
+
+describe("mod compatibility check", () => {
+  const manifestFile = () => path.join(fx.cfg.scriptsDir, "common/downloaded_versions.json");
+
+  async function settle(mods: ReturnType<typeof createMods>, jobId: string) {
+    for (let i = 0; i < 200; i++) {
+      const job = mods.getModCompat(jobId)!;
+      if (job.state !== "running") return job;
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    throw new Error("job never finished");
+  }
+
+  beforeEach(() => {
+    stage("check-updates.js", "remove-mod.js");
+    touch(
+      manifestFile(),
+      JSON.stringify({
+        modLoader: "fabric",
+        mods: { sodium: { versionId: "s1", filename: "s.jar" }, lithium: "l1" },
+      }),
+    );
+    runMock.mockImplementation(async (_cfg: unknown, command: string[]) => {
+      const only = command.find((a) => a.startsWith("--only="))!.slice(7);
+      return ok({
+        mcVersion: "1.21.5",
+        modLoader: "fabric",
+        results: [{ slug: only, status: "up_to_date" }],
+      });
+    });
+  });
+
+  it("runs the check script once per slug with --only before the --", async () => {
+    const mods = createMods(fx.cfg);
+    const job = await settle(mods, (await mods.startModCompat("1.21.5")).jobId);
+    expect(job.summary).toEqual({ available: 2, unavailable: 0, unknown: 0, total: 2 });
+    const runs = runMock.mock.calls.map(([, command]) => command as string[]);
+    expect(runs).toHaveLength(2);
+    for (const command of runs) {
+      expect(command.slice(2, 4)).toEqual([
+        "--mcVersion=1.21.5",
+        expect.stringMatching(/^--only=/),
+      ]);
+      expect(command.slice(-2)).toEqual(["--json", "--"]);
+    }
+  });
+
+  it("drops the cached answer after a mod mutation", async () => {
+    const mods = createMods(fx.cfg);
+    await settle(mods, (await mods.startModCompat("1.21.5")).jobId);
+    runMock.mockClear();
+    await settle(mods, (await mods.startModCompat("1.21.5")).jobId);
+    expect(runMock).not.toHaveBeenCalled();
+
+    runMock.mockResolvedValueOnce(ok({ ok: true }));
+    await mods.removeMod("lithium");
+    runMock.mockClear();
+    await settle(mods, (await mods.startModCompat("1.21.5")).jobId);
+    expect(runMock).toHaveBeenCalled();
+  });
+
+  it("never passes an invalid slug to the script", async () => {
+    touch(manifestFile(), JSON.stringify({ modLoader: "fabric", mods: { "--evil": "x" } }));
+    const mods = createMods(fx.cfg);
+    const job = await settle(mods, (await mods.startModCompat("1.21.5")).jobId);
+    expect(job.state).toBe("failed");
+    expect(runMock).not.toHaveBeenCalled();
+  });
+});

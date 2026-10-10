@@ -233,6 +233,35 @@ const cases: Array<[string, S.JsonSchema, unknown]> = [
     } satisfies W.ModUpdateCheck,
   ],
   [
+    "ModCompatJob",
+    S.ModCompatJob,
+    {
+      jobId: "6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f",
+      state: "done",
+      mcVersion: "1.21.5",
+      modLoader: "fabric",
+      progress: { done: 2, total: 2 },
+      partial: [],
+      checkedAt: 1700000000000,
+      complete: false,
+      summary: { available: 1, unavailable: 0, unknown: 1, total: 2 },
+      mods: [
+        {
+          slug: "a",
+          availability: "available",
+          currentVersionId: "v1",
+          target: {
+            versionId: "v2",
+            versionName: "A 2",
+            datePublished: "2026-01-01T00:00:00Z",
+            downloadUrl: "https://cdn/a.jar",
+          },
+        },
+        { slug: "b", availability: "unknown", reason: "rate limited" },
+      ],
+    } satisfies W.ModCompatJob,
+  ],
+  [
     "CommandResult",
     S.CommandResult,
     { result: null } satisfies W.CommandResult,
