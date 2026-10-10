@@ -21,3 +21,19 @@ export async function mapLimit<T, R>(
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return results;
 }
+
+/**
+ * A promise-chain lock: tasks passed to `run` execute one at a time, in call
+ * order. A task that rejects releases the lock for the next one and still
+ * rejects its own caller.
+ */
+export function createMutex(): { run<T>(task: () => Promise<T>): Promise<T> } {
+  let tail: Promise<unknown> = Promise.resolve();
+  return {
+    run<T>(task: () => Promise<T>): Promise<T> {
+      const result = tail.then(task);
+      tail = result.catch(() => undefined);
+      return result;
+    },
+  };
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mapLimit } from "../../src/platform/concurrency.js";
+import { createMutex, mapLimit } from "../../src/platform/concurrency.js";
 
 describe("mapLimit()", () => {
   it("preserves order and results regardless of completion order", async () => {
@@ -35,5 +35,37 @@ describe("mapLimit()", () => {
         return n;
       }),
     ).rejects.toThrow("boom");
+  });
+});
+
+describe("createMutex", () => {
+  it("runs tasks one at a time in call order", async () => {
+    const mutex = createMutex();
+    const events: string[] = [];
+    const gate = (name: string, ms: number) => async () => {
+      events.push(`start ${name}`);
+      await new Promise((r) => setTimeout(r, ms));
+      events.push(`end ${name}`);
+      return name;
+    };
+    const results = await Promise.all([
+      mutex.run(gate("a", 30)),
+      mutex.run(gate("b", 5)),
+      mutex.run(gate("c", 1)),
+    ]);
+    expect(results).toEqual(["a", "b", "c"]);
+    expect(events).toEqual([
+      "start a", "end a", "start b", "end b", "start c", "end c",
+    ]);
+  });
+
+  it("keeps running after a task rejects, and still rejects that caller", async () => {
+    const mutex = createMutex();
+    const failing = mutex.run(async () => {
+      throw new Error("boom");
+    });
+    const next = mutex.run(async () => "ok");
+    await expect(failing).rejects.toThrow("boom");
+    await expect(next).resolves.toBe("ok");
   });
 });

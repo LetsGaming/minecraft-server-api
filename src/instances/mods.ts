@@ -24,7 +24,7 @@ import fsp from "fs/promises";
 import path from "path";
 
 import { cached } from "../platform/cache.js";
-import { mapLimit } from "../platform/concurrency.js";
+import { createMutex, mapLimit } from "../platform/concurrency.js";
 import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
 
 /** Above the 4-thread libuv pool, low enough to leave it room for other work. */
@@ -222,7 +222,7 @@ export function createMods(cfg: InstanceConfig) {
    * (a genuine internal failure → 500). Returns the parsed object otherwise —
    * including a script's own `{ok:false}`, which the route reports at 200.
    */
-  async function runModScript(
+  async function runModScriptUnlocked(
     which: keyof typeof SCRIPTS,
     flags: string[],
     positionals: string[],
@@ -254,6 +254,27 @@ export function createMods(cfg: InstanceConfig) {
           detail.slice(-500),
       );
     }
+  }
+
+  /**
+   * Every script except "check" read-modify-writes downloaded_versions.json
+   * (and moves jars), so two of them running at once can lose each other's
+   * update. They run one at a time per instance; a long apply therefore delays
+   * a queued toggle until it finishes. "check" only reads, so it bypasses the
+   * queue.
+   */
+  const writeLock = createMutex();
+
+  function runModScript(
+    which: keyof typeof SCRIPTS,
+    flags: string[],
+    positionals: string[],
+    label: string,
+  ): Promise<unknown> {
+    if (which === "check") {
+      return runModScriptUnlocked(which, flags, positionals, label);
+    }
+    return writeLock.run(() => runModScriptUnlocked(which, flags, positionals, label));
   }
 
   function assertOkField(value: unknown, label: string): void {

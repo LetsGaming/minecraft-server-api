@@ -143,6 +143,85 @@ describe("runModScript via the public operations", () => {
   });
 });
 
+describe("per-instance serialisation", () => {
+  function deferred() {
+    let release!: () => void;
+    const promise = new Promise<void>((r) => (release = r));
+    return { promise, release };
+  }
+
+  it("runs mutating scripts one at a time, in call order", async () => {
+    stage("add-mod.js", "remove-mod.js", "update-mod.js", "toggle-mod.js");
+    const gates = [deferred(), deferred(), deferred(), deferred()];
+    const started: string[] = [];
+    runMock.mockImplementation(async (_t, command: string[]) => {
+      const name = path.basename(command[1]!);
+      started.push(name);
+      await gates[started.length - 1]!.promise;
+      return ok({ ok: true });
+    });
+    const mods = createMods(fx.cfg);
+    const all = Promise.all([
+      mods.addMod("a"),
+      mods.removeMod("b"),
+      mods.updateMod("c"),
+      mods.disableMod("d"),
+    ]);
+    await vi.waitFor(() => expect(started).toEqual(["add-mod.js"]));
+    gates[0]!.release();
+    await vi.waitFor(() => expect(started).toEqual(["add-mod.js", "remove-mod.js"]));
+    gates[1]!.release();
+    await vi.waitFor(() => expect(started).toHaveLength(3));
+    gates[2]!.release();
+    await vi.waitFor(() => expect(started).toHaveLength(4));
+    gates[3]!.release();
+    await all;
+    expect(started).toEqual(["add-mod.js", "remove-mod.js", "update-mod.js", "toggle-mod.js"]);
+  });
+
+  it("does not queue update checks behind a running mutation", async () => {
+    stage("add-mod.js", "check-updates.js");
+    const gate = deferred();
+    runMock.mockImplementation(async (_t, command: string[]) => {
+      if (command[1]!.endsWith("add-mod.js")) await gate.promise;
+      return command[1]!.endsWith("check-updates.js") ? ok({ results: [] }) : ok({ ok: true });
+    });
+    const mods = createMods(fx.cfg);
+    const adding = mods.addMod("a");
+    await vi.waitFor(() => expect(runMock).toHaveBeenCalledTimes(1));
+    await expect(mods.checkUpdates()).resolves.toEqual({ results: [] });
+    gate.release();
+    await adding;
+  });
+
+  it("releases the queue when a script fails", async () => {
+    stage("add-mod.js", "remove-mod.js");
+    runMock.mockRejectedValueOnce(new Error("Add mod timed out"));
+    runMock.mockResolvedValueOnce(ok({ ok: true }));
+    const mods = createMods(fx.cfg);
+    const first = mods.addMod("a");
+    const second = mods.removeMod("b");
+    await expect(first).rejects.toThrow(/timed out/);
+    await expect(second).resolves.toEqual({ ok: true });
+  });
+
+  it("keeps separate instances independent", async () => {
+    stage("add-mod.js");
+    const other = makeFixture();
+    touch(path.join(other.cfg.scriptsDir, "update", "add-mod.js"));
+    const gate = deferred();
+    runMock.mockImplementation(async (target) => {
+      if (target === fx.cfg) await gate.promise;
+      return ok({ ok: true });
+    });
+    const slow = createMods(fx.cfg).addMod("a");
+    await expect(createMods(other.cfg).addMod("b")).resolves.toEqual({ ok: true });
+    gate.release();
+    await slow;
+    other.cleanup();
+  });
+});
+
 describe("manifest reads and cache invalidation", () => {
   const manifest = {
     gameVersion: "1.21.4",
