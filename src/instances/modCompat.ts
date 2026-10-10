@@ -15,6 +15,7 @@
 import { createHash, randomUUID } from "crypto";
 
 import { mapLimit } from "../platform/concurrency.js";
+import { log } from "../platform/logger.js";
 import type {
   ModCompatAvailability,
   ModCompatJob,
@@ -28,7 +29,7 @@ export const COMPAT_JOB_RETENTION_MS = 15 * 60_000;
 export const COMPAT_MAX_JOBS = 30;
 export const COMPAT_MAX_RUNNING = 3;
 const COMPAT_MAX_CACHE_ENTRIES = 20;
-const REASON_MAX = 300;
+const CDN_HOST = "cdn.modrinth.com";
 
 export interface InstalledSnapshot {
   modLoader: string | null;
@@ -69,9 +70,30 @@ interface Job {
   finishedAt: number | null;
 }
 
-function reasonText(value: unknown): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  return (text ?? "unknown error").slice(0, REASON_MAX);
+/**
+ * Failure text reaching a client is one of a few fixed phrases. Script output
+ * and thrown errors can carry paths, sudo output and upstream bodies, so the
+ * raw text is only matched against, never forwarded.
+ */
+export function failureReason(raw: unknown): string {
+  const text = typeof raw === "string" ? raw : JSON.stringify(raw) ?? "";
+  if (/timed? ?out|ETIMEDOUT|ECONNABORTED|ESOCKETTIMEDOUT/i.test(text)) return "timeout";
+  if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|EHOSTUNREACH|network|socket hang up/i.test(text)) {
+    return "modrinth unreachable";
+  }
+  if (/(?<![0-9])429(?![0-9])|rate.?limit|too many requests/i.test(text)) return "rate limited";
+  if (/(?<![0-9])404(?![0-9])|not found/i.test(text)) return "mod not found on modrinth";
+  return "check failed";
+}
+
+function publicDownloadUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === CDN_HOST ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -91,7 +113,7 @@ export function classifyResult(
   const base: ModCompatMod = { slug, availability: "unknown" };
   if (currentVersionId) base.currentVersionId = currentVersionId;
   if (!isRecord(entry)) {
-    return { ...base, reason: "The update check returned no result" };
+    return { ...base, reason: "check failed" };
   }
   const status = entry["status"];
   let availability: ModCompatAvailability = "unknown";
@@ -105,7 +127,7 @@ export function classifyResult(
   if (status === "update_available") {
     const versionId = str(entry["latestVersionId"]);
     if (versionId) {
-      const downloadUrl = str(entry["downloadUrl"]);
+      const downloadUrl = publicDownloadUrl(entry["downloadUrl"]);
       mod.target = {
         versionId,
         versionName: str(entry["latestVersionName"]) ?? versionId,
@@ -115,11 +137,17 @@ export function classifyResult(
     }
   }
   if (availability === "unavailable") {
-    mod.reason = reasonText(entry["message"] ?? "No compatible release");
+    mod.reason = "no compatible release";
   } else if (availability === "unknown") {
-    mod.reason = reasonText(
-      entry["error"] ?? entry["message"] ?? `Unrecognised status ${String(status)}`,
-    );
+    mod.reason =
+      status === "invalid_entry"
+        ? "invalid manifest entry"
+        : failureReason(entry["error"] ?? entry["message"]);
+    if (status !== "invalid_entry" && status !== "error") {
+      log.warn("mods", `compat: unrecognised check status for ${slug}`);
+    } else if (status === "error") {
+      log.warn("mods", `compat: check failed for ${slug}: ${JSON.stringify(entry["error"]).slice(0, 500)}`);
+    }
   }
   return mod;
 }
@@ -220,12 +248,15 @@ export function createModCompat(deps: ModCompatDeps) {
         );
       } catch (err) {
         thrown++;
-        firstError ||= err instanceof Error ? err.message : String(err);
+        const detail = err instanceof Error ? err.message : String(err);
+        log.error("mods", `compat: check script failed for ${mod.slug}: ${detail}`);
+        const reason = /timed? ?out/i.test(detail) ? "timeout" : "script failed";
+        firstError ||= reason;
         outcome = {
           slug: mod.slug,
           availability: "unknown",
           ...(mod.versionId ? { currentVersionId: mod.versionId } : {}),
-          reason: reasonText(err instanceof Error ? err.message : err),
+          reason,
         };
       }
       job.partial.push(outcome);
@@ -235,7 +266,7 @@ export function createModCompat(deps: ModCompatDeps) {
     job.finishedAt = now();
     if (installed.mods.length > 0 && thrown === installed.mods.length) {
       job.state = "failed";
-      job.error = reasonText(firstError);
+      job.error = firstError;
       return;
     }
     const mods = [...job.partial].sort((a, b) => a.slug.localeCompare(b.slug));
@@ -307,8 +338,9 @@ export function createModCompat(deps: ModCompatDeps) {
 
       const job = newJob(key, mcVersion, installed.modLoader, installed.mods.length);
       void run(job, installed).catch((err: unknown) => {
+        log.error("mods", `compat: job failed: ${err instanceof Error ? err.message : String(err)}`);
         job.state = "failed";
-        job.error = reasonText(err instanceof Error ? err.message : err);
+        job.error = "check failed";
         job.finishedAt = now();
       });
       return { jobId: job.id };

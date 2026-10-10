@@ -60,22 +60,53 @@ describe("classifyResult", () => {
       latestVersionId: "v2",
       latestVersionName: "A 2.0",
       datePublished: "2026-01-01T00:00:00Z",
-      downloadUrl: "https://cdn/a.jar",
+      downloadUrl: "https://cdn.modrinth.com/data/x/a.jar",
     });
     expect(mod.target).toEqual({
       versionId: "v2",
       versionName: "A 2.0",
       datePublished: "2026-01-01T00:00:00Z",
-      downloadUrl: "https://cdn/a.jar",
+      downloadUrl: "https://cdn.modrinth.com/data/x/a.jar",
     });
   });
 
-  it("serialises an object error and bounds its length", () => {
-    const mod = classifyResult("a", null, {
-      status: "error",
-      error: { description: "x".repeat(1000) },
-    });
-    expect(mod.reason!.length).toBeLessThanOrEqual(300);
+  const LEAKY = "ENOENT /home/mcuser/server/scripts/update/check-updates.js sudo: a password is required token=hunter2";
+
+  it.each([
+    [{ status: "error", error: LEAKY }],
+    [{ status: "error", error: { description: LEAKY } }],
+    [{ status: "invalid_entry", message: LEAKY }],
+    [{ status: "no_versions", message: LEAKY }],
+    [{ status: "weird", message: LEAKY }],
+  ])("never forwards script text: %j", (entry) => {
+    const mod = classifyResult("a", null, entry);
+    expect(mod.reason).toBeTruthy();
+    expect(mod.reason).not.toMatch(/home|mcuser|sudo|hunter2|[.]js|[/]/);
+  });
+
+  it("maps upstream failures to fixed phrases", () => {
+    const reason = (error: unknown) =>
+      classifyResult("a", null, { status: "error", error }).reason;
+    expect(reason("connect ETIMEDOUT 1.2.3.4:443")).toBe("timeout");
+    expect(reason("getaddrinfo ENOTFOUND api.modrinth.com")).toBe("modrinth unreachable");
+    expect(reason({ error: "rate_limit", status: 429 })).toBe("rate limited");
+    expect(reason("Request failed with status code 404")).toBe("mod not found on modrinth");
+    expect(reason("anything else")).toBe("check failed");
+  });
+
+  it("keeps only a Modrinth CDN download link", () => {
+    const url = (downloadUrl: string) =>
+      classifyResult("a", null, {
+        status: "update_available",
+        latestVersionId: "v2",
+        downloadUrl,
+      }).target?.downloadUrl;
+    expect(url("https://cdn.modrinth.com/data/x/versions/y/a.jar")).toBe(
+      "https://cdn.modrinth.com/data/x/versions/y/a.jar",
+    );
+    expect(url("http://cdn.modrinth.com/a.jar")).toBeUndefined();
+    expect(url("https://evil.example/a.jar")).toBeUndefined();
+    expect(url("file:///etc/passwd")).toBeUndefined();
   });
 
   it("treats a missing entry as unknown", () => {
@@ -193,14 +224,31 @@ describe("createModCompat", () => {
     const job = await finished(compat, (await compat.start("1.21.5")).jobId);
     expect(job.state).toBe("done");
     expect(job.summary).toEqual({ available: 2, unavailable: 0, unknown: 1, total: 3 });
-    expect(job.mods!.find((m) => m.slug === "b")!.reason).toBe("spawn failed");
+    expect(job.mods!.find((m) => m.slug === "b")!.reason).toBe("script failed");
   });
 
   it("fails the job only when every slug could not run", async () => {
-    checkOne.mockRejectedValue(new Error("script missing"));
+    checkOne.mockRejectedValue(
+      new Error("sudo: /home/mcuser/scripts/update/check-updates.js: not found"),
+    );
     const job = await finished(compat, (await compat.start("1.21.5")).jobId);
     expect(job.state).toBe("failed");
-    expect(job.error).toBe("script missing");
+    expect(job.error).toBe("script failed");
+    expect(JSON.stringify(job)).not.toMatch(/home|sudo|mcuser/);
+  });
+
+  it("issues unguessable uuid job ids and keeps jobs per instance", async () => {
+    const ids = new Set<string>();
+    for (let i = 0; i < 5; i++) ids.add((await compat.start(`1.${i}`)).jobId);
+    for (const id of ids) {
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    }
+    expect(ids.size).toBe(5);
+
+    const other = createModCompat({ readInstalled: async () => snapshot, checkOne });
+    const [id] = [...ids];
+    expect(other.get(id!)).toBeNull();
+    expect(compat.get(id!)).not.toBeNull();
   });
 
   it("finishes an empty mod set as done", async () => {
