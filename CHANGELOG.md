@@ -32,6 +32,7 @@ unchanged.
 
 ### Changed
 
+- **`POST /instances/:id/command` reports how the command travelled** (`rcon-command` v2). The reply is now `{ result, via: "rcon"|"screen", sent, rconError? }`; `result` is unchanged for older bots. `rconError` names why RCON was skipped when the screen fallback carried the command. A command that neither RCON nor `screen` could deliver now answers `502 { error }` instead of `200 { result: null }`. Touched: `src/instances/commands.ts`, `src/http/routes/instance/control.ts`, `src/contracts/{schemas,wire,manifest,routeSchema}.ts`, `openapi.json`.
 - Replies are serialized through their response schema, so a field that is not part of the contract no longer reaches a client. The restore test stub returned a shape the real route never produced; it now matches `ScriptResult`.
 - The README route table lists the mod, config and delete routes it was missing, and no longer names wrapper versions for features. Read the features in `GET /manifest` instead.
 - **Startup now fails** for an API key shorter than 32 characters and for a `linuxUser` that is not a valid Linux user name, each with a message naming the problem. Existing deployments with a short key must set a longer one (`openssl rand -hex 32`) in both the wrapper and the bot.

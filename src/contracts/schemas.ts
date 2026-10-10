@@ -608,11 +608,20 @@ export const ModCompatRequest = named(
 export const CommandResult = named(
   "CommandResult",
   object(
-    { result: nullable(string) },
     {
+      result: nullable(string),
+      via: { type: "string", enum: ["rcon", "screen"] },
+      sent: boolean,
+      rconError: string,
+    },
+    {
+      required: ["result", "via", "sent"],
       description:
-        "The console's reply. `null` when the command went through the screen " +
-        "fallback, which has no reply channel.",
+        "`via` names the channel that carried the command. `result` is the " +
+        "console's reply, or `null` over the screen fallback, which has no " +
+        "reply channel. `rconError` is set when RCON failed and the screen " +
+        "fallback was used instead. A command neither channel could deliver " +
+        "is a 502, never a 200.",
     },
   ),
 );

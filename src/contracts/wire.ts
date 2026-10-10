@@ -17,6 +17,10 @@ export interface WrapperHealth {
 export interface CommandResult {
   /** null when the command went through the screen fallback, which has no reply channel. */
   result: string | null;
+  via: "rcon" | "screen";
+  sent: boolean;
+  /** Set when RCON failed and the screen fallback carried the command. */
+  rconError?: string;
 }
 
 export interface ModSlugs {

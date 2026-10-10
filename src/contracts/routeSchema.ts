@@ -71,6 +71,7 @@ const ERROR_DESCRIPTIONS: Record<number, string> = {
   428: "Precondition required",
   429: "Too many requests",
   500: "Internal server error",
+  502: "Command could not be delivered",
   503: "Unavailable",
 };
 

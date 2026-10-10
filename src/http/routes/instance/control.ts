@@ -15,6 +15,8 @@ import {
   errors,
   instanceParams,
 } from "../../../contracts/routeSchema.js";
+import { log } from "../../../platform/logger.js";
+import { CommandDeliveryError } from "../../../instances/commands.js";
 import { internalError } from "../../errors.js";
 import { validateArgs } from "../../validation.js";
 import { checkConsoleCommand, COMMAND_ERRORS } from "../../consoleCommand.js";
@@ -37,7 +39,7 @@ export function registerControlRoutes(
         tags: ["control"],
         params: instanceParams(),
         requestBody: { required: true, schema: CommandRequest },
-        response: { 200: CommandResult, ...errors(400, 404, 500) },
+        response: { 200: CommandResult, ...errors(400, 404, 500, 502) },
       },
     },
     async (req, reply) => {
@@ -50,8 +52,14 @@ export function registerControlRoutes(
       }
 
       try {
-        return { result: await entry.sendCommand(check.command) };
+        return await entry.sendCommand(check.command);
       } catch (err) {
+        if (err instanceof CommandDeliveryError) {
+          log.warn(req.params.id, `command not delivered: ${err.message}`);
+          return reply.status(502).send({
+            error: "Command could not be delivered to the server",
+          });
+        }
         return internalError(reply, `command ${req.params.id}`, err);
       }
     },

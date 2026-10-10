@@ -264,7 +264,12 @@ const cases: Array<[string, S.JsonSchema, unknown]> = [
   [
     "CommandResult",
     S.CommandResult,
-    { result: null } satisfies W.CommandResult,
+    {
+      result: null,
+      via: "screen",
+      sent: true,
+      rconError: "refused",
+    } satisfies W.CommandResult,
   ],
   [
     "TpsResponse (paper)",
