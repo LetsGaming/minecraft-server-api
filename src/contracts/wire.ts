@@ -1,12 +1,61 @@
 /**
- * The wire contract the bot consumes (minecraft-bot:
- * src/core/utils/serverAccess.ts) — field names and types must stay in
- * lockstep with the bot's expectations. Historical quirks (string
- * playerCount, "?" maxPlayers) are part of that contract and deliberately
- * preserved.
+ * The response types the route layer returns. Their runtime counterparts are
+ * the JSON Schemas in schemas.ts, which Fastify serializes every reply
+ * through and which become openapi.json; the bot generates its own types from
+ * that document. tests/contracts/wireAgreement.test.ts fails when a type here
+ * and its schema disagree. Historical quirks (string playerCount, "?"
+ * maxPlayers) are part of the contract and deliberately preserved.
  *
  * Config shapes live in config/types.ts; this file is responses only.
  */
+
+export interface WrapperHealth {
+  ok: boolean;
+  version: string;
+}
+
+export interface CommandResult {
+  /** null when the command went through the screen fallback, which has no reply channel. */
+  result: string | null;
+}
+
+export interface ModSlugs {
+  slugs: string[];
+  /** mtime of downloaded_versions.json. */
+  mtimeMs: number;
+}
+
+export interface BackupFileDeleted {
+  ok: boolean;
+  name: string;
+  tier: string;
+  sizeBytes: number;
+}
+
+export interface ConfigFileInfo {
+  /** Opaque handle; the only file reference a client may send back. */
+  id: string;
+  /** Display path relative to the server directory. */
+  relPath: string;
+  /** Best guess at the owning mod; a grouping hint, not an identity. */
+  modId: string;
+  format: string;
+  sizeBytes: number;
+  mtimeMs: number;
+}
+
+export interface ConfigFileRead {
+  text: string;
+  etag: string;
+  file: ConfigFileInfo;
+  /** Snapshot names, newest first. */
+  snapshots: string[];
+}
+
+export interface ConfigFileWritten {
+  etag: string;
+  snapshot: string;
+}
 
 export interface PlayerList {
   playerCount: string;
@@ -103,19 +152,19 @@ export interface Capabilities {
     start: boolean;
     stop: boolean;
     restart: boolean;
-    /** rollback.sh — added in wrapper 3.3.0. */
+    /** rollback.sh. */
     rollback: boolean;
     backup: boolean;
     status: boolean;
   };
   backups: boolean;
-  /** backup/restore.sh — added in wrapper 3.3.0. Not a SCRIPT_MAP action. */
+  /** backup/restore.sh. Not a SCRIPT_MAP action. */
   restore: boolean;
   modManifest: boolean;
   variablesFile: boolean;
 }
 
-/** One archive in the backups directory (wrapper >= 3.3.0). */
+/** One archive in the backups directory. */
 export interface BackupFileInfo {
   /** Opaque handle; the only file reference a client may send back. */
   id: string;
@@ -232,7 +281,7 @@ export interface WhitelistEntry {
   uuid: string;
 }
 
-// ── /info (wrapper >= 1.2.0 contract; this wrapper reports its own semver) ──
+// ── /info ──────────────────────────────────────────────────────────────────
 
 export interface ProcessUsage {
   pid: number;

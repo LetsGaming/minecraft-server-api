@@ -16,14 +16,14 @@ on:
   push:
     paths:
       - "src/**"
-      - "openapi.yaml"
+      - "openapi.json"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/contract.yml"
   pull_request:
     paths:
       - "src/**"
-      - "openapi.yaml"
+      - "openapi.json"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/contract.yml"
