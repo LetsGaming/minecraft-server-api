@@ -26,6 +26,7 @@ import path from "path";
 import { cached } from "../platform/cache.js";
 import { createMutex, mapLimit } from "../platform/concurrency.js";
 import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
+import { createModCompat } from "./modCompat.js";
 
 /** Above the 4-thread libuv pool, low enough to leave it room for other work. */
 const EXISTS_CONCURRENCY = 8;
@@ -214,6 +215,7 @@ export function createMods(cfg: InstanceConfig) {
   function invalidateModsCache(): void {
     modSlugsCache.invalidate();
     listInstalledCache.invalidate();
+    modCompat.invalidate();
   }
 
   /**
@@ -276,6 +278,29 @@ export function createMods(cfg: InstanceConfig) {
     }
     return writeLock.run(() => runModScriptUnlocked(which, flags, positionals, label));
   }
+
+  const modCompat = createModCompat({
+    async readInstalled() {
+      const manifest = await readManifest();
+      if (!manifest) return null;
+      return {
+        modLoader: manifest.data.modLoader,
+        mods: Object.entries(manifest.data.mods).map(([slug, entry]) => ({
+          slug,
+          versionId: typeof entry === "string" ? entry : (entry.versionId ?? null),
+        })),
+      };
+    },
+    async checkOne(slug, mcVersion) {
+      if (!SLUG_RE.test(slug)) throw new Error("Not a valid mod slug");
+      return runModScript(
+        "check",
+        [`--mcVersion=${mcVersion}`, `--only=${slug}`],
+        [],
+        "Check mod compatibility",
+      );
+    },
+  });
 
   function assertOkField(value: unknown, label: string): void {
     if (
@@ -357,6 +382,8 @@ export function createMods(cfg: InstanceConfig) {
     addMod,
     removeMod,
     checkUpdates,
+    startModCompat: modCompat.start,
+    getModCompat: modCompat.get,
     applyUpdates,
     updateMod,
     disableMod,

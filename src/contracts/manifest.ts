@@ -139,6 +139,17 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "driving the suite's scripts/update/*.js as the instance user, plus " +
       "a richer installed list.",
   },
+  "mod-compat": {
+    version: 1,
+    routes: [
+      "POST /instances/:id/mods/compat",
+      "GET /instances/:id/mods/compat/:jobId",
+    ],
+    summary:
+      "Checking which installed mods have a release for a target Minecraft " +
+      "version, as a background job that reports progress and partial " +
+      "results. Needs a setup suite whose check-updates.js accepts --only.",
+  },
   backups: {
     version: 1,
     routes: ["GET /instances/:id/backups"],

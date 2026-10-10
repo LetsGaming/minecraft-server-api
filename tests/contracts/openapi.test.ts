@@ -70,14 +70,14 @@ describe("openapi.json", () => {
     expect(doc.info.version).toBe(WRAPPER_VERSION);
   });
 
-  it("gives every operation a summary, a tag, a unique id and a 200 reply", () => {
+  it("gives every operation a summary, a tag, a unique id and a success reply", () => {
     const ids = new Set<string>();
     for (const [path, verbs] of Object.entries(doc.paths)) {
       for (const [verb, op] of Object.entries(verbs)) {
         const where = `${verb.toUpperCase()} ${path}`;
         expect(op.summary, `${where} has no summary`).toBeTruthy();
         expect(op.tags?.length, `${where} has no tag`).toBeGreaterThan(0);
-        expect(op.responses["200"], `${where} has no 200 reply`).toBeDefined();
+        expect(op.responses["200"] ?? op.responses["202"], `${where} has no success reply`).toBeDefined();
         expect(ids.has(op.operationId), `${where} repeats an operationId`).toBe(
           false,
         );
