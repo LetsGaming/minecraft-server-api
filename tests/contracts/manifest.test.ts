@@ -4,12 +4,8 @@
  * The manifest only has value if it cannot lie, so most of this file is
  * about that rather than about the endpoint: routes come from the real
  * router, every feature must be served by routes that exist, every route
- * must belong to a feature, and openapi.yaml must agree with all of it.
- *
- * That last one is the reason the manifest is generated instead of being
- * openapi.yaml itself: the 2.x spec described four routes that never
- * existed and omitted half the real ones. Now the spec is checked against
- * the router rather than trusted.
+ * must belong to a feature. The generated openapi.json is checked against
+ * the same router in openapi.test.ts.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "fs";
@@ -152,37 +148,5 @@ describe("the manifest cannot lie about this wrapper", () => {
     // A new route with no feature is a capability the bot can never learn
     // about — which is the whole failure this manifest exists to prevent.
     expect(orphans).toEqual([]);
-  });
-});
-
-describe("openapi.yaml agrees with the router", () => {
-  // The spec is documentation, so it drifts; this is the check that stops
-  // it. It compares path sets only — response shapes are not asserted here.
-  function specRoutes(): string[] {
-    const yaml = fs.readFileSync(
-      path.resolve(import.meta.dirname, "..", "..", "openapi.yaml"),
-      "utf-8",
-    );
-    const out: string[] = [];
-    let current: string | null = null;
-    for (const line of yaml.split("\n")) {
-      const pathLine = /^ {2}(\/[^\s:]*):\s*$/.exec(line);
-      if (pathLine) {
-        // OpenAPI writes {id}; Fastify writes :id.
-        current = pathLine[1]!.replace(/\{(\w+)\}/g, ":$1");
-        continue;
-      }
-      if (!current) continue;
-      const verb = /^ {4}(get|post|put|patch|delete):\s*$/.exec(line);
-      if (verb) out.push(`${verb[1]!.toUpperCase()} ${current}`);
-      // A non-indented line ends the paths block.
-      if (/^\S/.test(line)) current = null;
-    }
-    return out;
-  }
-
-  it("documents every route and invents none", async () => {
-    const body = await getManifest();
-    expect(specRoutes().sort()).toEqual(body.routes.sort());
   });
 });

@@ -4,28 +4,59 @@ All notable changes to mc-api-server are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 semver.
 
+Sections for 3.2.0 to 3.5.0 were reconstructed from git history. The 3.x line
+has no release tags, so each section holds what landed up to the commit that
+bumped `package.json` to that version, dated by that commit. Entries after the
+3.5.0 bump commit stay under Unreleased even though `package.json` already
+reads 3.5.0. If a release was cut at a different commit, the split between two
+neighbouring sections is the part to doubt; the entries themselves are
+unchanged.
+
 ## [Unreleased]
 
 ### Added
 
+- **`openapi.json`, generated from the router** (`npm run openapi:generate`). Every route now declares a response schema (`src/contracts/schemas.ts`), and the document is built from the same route census that backs `/manifest`, with the package version as `info.version`. minecraft-bot vendors this file and generates its wire types from it. Touched: `src/contracts/{schemas,routeSchema,openapi,generateOpenApi}.ts`, `src/http/routes/**`, `openapi.json`.
+- **`POST /instances/:id/mods/:slug/update`** updates one installed mod to the latest compatible build (`mod-management`).
+- **`versionId` on `POST /instances/:id/mods`** pins a specific Modrinth build instead of the latest.
+- **Disable and enable mods** (`mod-management` v2): `POST /instances/:id/mods/:slug/disable` and `/enable` move the jar between `mods/` and `mods/disabled/`. Entries in `GET /mods/installed` gain `enabled`, derived from where the jar sits; `GET /mods` leaves disabled mods out.
+- **`DELETE /instances/:id/backups/files/:fileId`** removes one archive (`backup-files` v2), addressed by the same opaque id as download.
+- **`restartCount` and `unitFailed` on `GET /instances/:id/health`** (`server-health` v2): systemd restart-loop detection, so a crash loop is told apart from a clean outage.
 - **Bulk player stats** (`stats-bulk` manifest feature, v1): `GET /instances/:id/stats/bulk` returns every player's stats file in one response, bounded to 8 concurrent reads server-side. Replaces the pattern of one HTTP request per lifetime player a leaderboard build used to make against this wrapper — on a server with a few hundred players who have ever joined, that was a few hundred simultaneous requests landing on a 4-thread filesystem pool and a shared rate-limit budget at once. Cached 30s/300s, same as the bot's own `loadAllStats()` TTL.
 - **`GET /metrics`** (authenticated, exempt from rate limiting): per-route request count/p50/p95/error/timeout, current and peak in-flight requests, cache hit/miss counts, rate-limit rejections, RCON reconnect count, event-loop delay, and process memory/uptime. There was previously no way to answer what the wrapper was doing right before it became briefly unreachable.
 
 ### Changed
 
+- Replies are serialized through their response schema, so a field that is not part of the contract no longer reaches a client. The restore test stub returned a shape the real route never produced; it now matches `ScriptResult`.
+- The README route table lists the mod, config and delete routes it was missing, and no longer names wrapper versions for features. Read the features in `GET /manifest` instead.
 - The global rate limit (300 requests / 15 min, shared by every client and every route) is now two separate budgets: reads get 100/min, writes (scripts, mod mutations, restore, console commands) get a stricter 10/min. Both return `Retry-After`. The old flat budget was easy for a single leaderboard build or one open dashboard tab to exhaust well before the window rolled, and every request past it looked identical to the bot as "wrapper unreachable" rather than "rate limited".
 - Added a global in-flight request ceiling (32) returning a fast 503 + `Retry-After` above it, instead of accepting more work than the process can serve in time.
 - Previously-uncached routes now use the existing single-flight/stale-while-revalidate cache: `/instances/:id/info`'s host block (60s/300s — this route ran two full `du` walks per call), `/capabilities` (5min/1h), `/whitelist` (30s/300s), `/usercache` (60s/600s), `/backups` (60s/600s), `/backups/files` (60s/600s), and `/mods` + `/mods/installed` (60s/600s). Each is invalidated by the mutation that can change it.
 - `mods.ts`'s `getModSlugs()` checked each installed mod's enabled/disabled state one at a time in a sequential loop; it and `listInstalled()`'s equivalent unbounded `Promise.all` now both go through a bounded-concurrency helper (`platform/concurrency.ts`), also applied to the backup-files index.
 - PM2's memory ceiling moved from `max_memory_restart: "256M"` to `768M` with a matching `--max-old-space-size`, and both the PM2 and systemd deployment paths now set `UV_THREADPOOL_SIZE=8`; the systemd unit gained a `MemoryMax` it never had.
 
+### Removed
+
+- `openapi.yaml`. It was hand-written, had drifted (`info.version` read 3.0.0), and is replaced by the generated `openapi.json`. A test fails when the committed file is not what the router generates.
+
 ### Fixed
 
-- `POST /instances/:id/backups/files/:fileId/restore` now answers `409` with `{ error, state }` unless instance health reports `offline` (`online` and `unresponsive` both refuse) using a fresh, uncached probe, and `503` when that probe cannot complete, instead of running `restore.sh` against a live world. Touched: `src/http/routes/instance/backups.ts`, `openapi.yaml`, `tests/http/backupRestore.test.ts`.
+- `POST /instances/:id/backups/files/:fileId/restore` now answers `409` with `{ error, state }` unless instance health reports `offline` (`online` and `unresponsive` both refuse) using a fresh, uncached probe, and `503` when that probe cannot complete, instead of running `restore.sh` against a live world. Touched: `src/http/routes/instance/backups.ts`, `tests/http/backupRestore.test.ts`.
 - A sustained RCON outage had no backoff: every failed `send()` retried a full TCP connect + up to a 10s auth timeout on the very next call, and a burst of concurrent `/command` requests during that window could each hold a request open for up to 25s (the auth timeout plus the `screen stuff` fallback). The RCON client now fails fast for 2s after a failed connect instead.
 - `AuthFailTracker` (the auth-failure rate limiter) never evicted an IP once tracked, growing forever under a scanner hitting many source addresses. It now sweeps aged-out entries once past 10,000 tracked IPs.
 - `logStream.ts`'s per-instance 1s log-tail poller used synchronous `fs` calls on the event loop and ran its full read-and-broadcast work every tick regardless of whether any SSE client was attached to that instance; it now uses async `fs` calls and skips straight to tracking the read offset when nobody is watching.
 - `platform/spawn.ts` (the shared runner behind scripts, mod mutations, and restore) accumulated a spawned process's entire stdout/stderr in memory with no cap; a chatty script over the 600s mod-update timeout could grow unbounded. Capped at 2 MiB per stream.
+
+## [3.5.0] - 2026-08-17
+
+### Added
+
+- **Mod management API** (`mod-management` manifest feature, v1): `GET /instances/:id/mods/installed` (versions and filenames), `POST /instances/:id/mods` (install by slug), `DELETE /instances/:id/mods/:slug`, `GET /instances/:id/mods/updates` (check) and `POST /instances/:id/mods/updates` (apply). Each runs the suite's `update/*.js` script as the instance user with `--json`. A script that ran returns its structured result at 200, including its own handled `{ ok: false, error, code }`; only a failure to run it is a 500.
+- `platform/spawn.ts`, the one place a child is spawned as the instance's Linux user, now shared by the script runner, restore and the mod runner.
+
+## [3.4.0] - 2026-08-02
+
+### Added
 
 - **Mod config file API** (`mod-configs` manifest feature, v1): index, read,
   write and revert for mod config files.
@@ -52,6 +83,9 @@ semver.
   wrapper release is a deploy on every Minecraft host and TOML dialects are not
   worth that.
 
+## [3.3.0] - 2026-08-02
+
+### Added
 
 - **Individual backup archives: listing, download, and restore**
   (`backup-files` and `backup-restore` manifest features, both v1).
@@ -93,6 +127,8 @@ semver.
 - **`capabilities` gained `scripts.rollback` and `restore`.** Additive; a
   client reading the old fields is unaffected.
 
+- **Host metrics v2** (`host-info` manifest feature, v2): `process.cpuPercent` is sampled over a short window instead of `ps`'s lifetime average, `GET /instances/:id/info` gains a whole-machine `host` block (CPU, memory, uptime), and each disk entry carries its directory's own size plus the filesystem it sits on.
+
 ### Changed
 
 - **The backup timeout is 600s, was 300s.** A large modded world takes longer
@@ -109,10 +145,14 @@ semver.
   running wrapper, but it made every CI log say "1 high severity vulnerability"
   and that is how a real one gets ignored. Lockfile-only fix.
 
-- **`openapi.yaml` documented `scripts/run` without `rollback`, and referenced
+- **The hand-written OpenAPI file documented `scripts/run` without `rollback`, and referenced
   a `ScriptResult` schema that was never defined.** The route-coverage check in
   CI compares paths against the real router, so neither showed up there; both
   are now correct, and `ScriptResult` is defined once and shared.
+
+## [3.2.0] - 2026-07-27
+
+### Added
 
 - **`GET /instances/:id/health` — liveness and responsiveness, reported
   separately** (`server-health` manifest feature, v1).
@@ -143,6 +183,7 @@ semver.
   telling it the port while we still can is what makes that work without the
   operator configuring the same thing twice.
 
+### Changed
 
 - **`/running` is now process liveness, not an RCON probe.** `running` is
   `state !== "offline"`, so a loaded server stops reporting itself stopped
@@ -168,6 +209,7 @@ semver.
   five tiers of thousands of archives blocked *every* concurrent request,
   `/health` included. The backup tiers are also scanned in parallel now.
 
+### Fixed
 
 - **The log stream dropped filesystem events that arrived mid-read.**
   `processLogChanges` returned early when a read was already draining, so

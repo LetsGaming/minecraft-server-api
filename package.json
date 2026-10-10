@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "openapi:generate": "npm run build && node dist/contracts/generateOpenApi.js",
+    "openapi:check": "npm run build && node dist/contracts/generateOpenApi.js --check",
     "start": "node dist/index.js",
     "dev": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc -p tsconfig.json",

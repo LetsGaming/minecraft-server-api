@@ -20,6 +20,22 @@
  */
 import type { FastifyInstance } from "fastify";
 
+import {
+  InstalledMods,
+  ModAddRequest,
+  ModAddResult,
+  ModApplyResult,
+  ModRemoveResult,
+  ModSlugs,
+  ModToggleResult,
+  ModUpdateCheck,
+  ModUpdatesRequest,
+} from "../../../contracts/schemas.js";
+import {
+  errors,
+  instanceParams,
+  queryParams,
+} from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
 import { MOD_VALIDATION } from "../../../instances/mods.js";
 import {
@@ -35,7 +51,14 @@ export function registerModRoutes(
   resolve: ResolveInstance,
 ): void {
   // ── mods (v1): the bot's slug-only manifest, relocated here unchanged ─────
-  app.get<{ Params: InstanceParams }>(`${P}/mods`, async (req, reply) => {
+  app.get<{ Params: InstanceParams }>(`${P}/mods`,
+    { schema: {
+      summary: "Slugs of the active mods",
+      description: "Disabled mods are left out: they are not on the running server.",
+      tags: ["mods"],
+      params: instanceParams(),
+      response: { 200: ModSlugs, ...errors(404, 500) },
+    } }, async (req, reply) => {
     const entry = resolve(req.params.id, reply);
     if (!entry) return;
     // F-008: null means the manifest file is absent → 404.
@@ -53,6 +76,12 @@ export function registerModRoutes(
   // ── mod-management ────────────────────────────────────────────────────────
   app.get<{ Params: InstanceParams }>(
     `${P}/mods/installed`,
+    { schema: {
+      summary: "Installed mods with versions and enabled state",
+      tags: ["mods"],
+      params: instanceParams(),
+      response: { 200: InstalledMods, ...errors(404, 500) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -76,7 +105,17 @@ export function registerModRoutes(
       modLoader?: unknown;
       versionId?: unknown;
     };
-  }>(`${P}/mods`, async (req, reply) => {
+  }>(`${P}/mods`,
+    { schema: {
+      summary: "Install a mod",
+      description:
+        "Runs the suite's add-mod script. A handled failure is " +
+        "`{ ok: false, error, code }` at 200.",
+      tags: ["mods"],
+      params: instanceParams(),
+      requestBody: { required: true, schema: ModAddRequest },
+      response: { 200: ModAddResult, ...errors(400, 404, 500) },
+    } }, async (req, reply) => {
     const entry = resolve(req.params.id, reply);
     if (!entry) return;
 
@@ -111,6 +150,12 @@ export function registerModRoutes(
 
   app.delete<{ Params: InstanceParams & { slug: string } }>(
     `${P}/mods/:slug`,
+    { schema: {
+      summary: "Remove a mod",
+      tags: ["mods"],
+      params: instanceParams({ slug: "Mod slug or project id." }),
+      response: { 200: ModRemoveResult, ...errors(400, 404, 500) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -127,6 +172,13 @@ export function registerModRoutes(
 
   app.get<{ Params: InstanceParams; Querystring: { mcVersion?: string } }>(
     `${P}/mods/updates`,
+    { schema: {
+      summary: "Check installed mods for updates",
+      tags: ["mods"],
+      params: instanceParams(),
+      querystring: queryParams({ mcVersion: "Check against this Minecraft version." }),
+      response: { 200: ModUpdateCheck, ...errors(400, 404, 500) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -144,6 +196,12 @@ export function registerModRoutes(
 
   app.post<{ Params: InstanceParams & { slug: string } }>(
     `${P}/mods/:slug/update`,
+    { schema: {
+      summary: "Update one mod",
+      tags: ["mods"],
+      params: instanceParams({ slug: "Mod slug or project id." }),
+      response: { 200: ModApplyResult, ...errors(400, 404, 500) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -160,6 +218,13 @@ export function registerModRoutes(
 
   app.post<{ Params: InstanceParams; Body: { mcVersion?: unknown } }>(
     `${P}/mods/updates`,
+    { schema: {
+      summary: "Apply every available mod update",
+      tags: ["mods"],
+      params: instanceParams(),
+      requestBody: { schema: ModUpdatesRequest },
+      response: { 200: ModApplyResult, ...errors(400, 404, 500) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -177,6 +242,12 @@ export function registerModRoutes(
 
   app.post<{ Params: InstanceParams & { slug: string } }>(
     `${P}/mods/:slug/disable`,
+    { schema: {
+      summary: "Disable a mod without uninstalling it",
+      tags: ["mods"],
+      params: instanceParams({ slug: "Mod slug or project id." }),
+      response: { 200: ModToggleResult, ...errors(400, 404, 500) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -193,6 +264,12 @@ export function registerModRoutes(
 
   app.post<{ Params: InstanceParams & { slug: string } }>(
     `${P}/mods/:slug/enable`,
+    { schema: {
+      summary: "Re-enable a disabled mod",
+      tags: ["mods"],
+      params: instanceParams({ slug: "Mod slug or project id." }),
+      response: { 200: ModToggleResult, ...errors(400, 404, 500) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;

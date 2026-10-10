@@ -1,0 +1,4525 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "mc-api-server",
+    "version": "3.5.0",
+    "description": "Lightweight HTTP wrapper for managing Minecraft server instances, the\nremote backend for minecraft-bot.\n\nGenerated from the router by `npm run openapi:generate`. Do not edit by hand.\n\nEvery route except `GET /health` requires the `x-api-key` header. Every\nnon-2xx body is `{ \"error\": \"<message>\" }`. Clients negotiate by the\nfeature names and versions in `GET /manifest`, not by wrapper version."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000"
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Liveness and wrapper version",
+        "description": "Public. Safe for uptime monitors; never touches an instance.",
+        "tags": [
+          "meta"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WrapperHealth"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances": {
+      "get": {
+        "operationId": "getInstances",
+        "summary": "Configured instance ids",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/backups": {
+      "get": {
+        "operationId": "getInstancesByIdBackups",
+        "summary": "Backup tiers: counts and the newest archive of each",
+        "tags": [
+          "backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/backups/files": {
+      "get": {
+        "operationId": "getInstancesByIdBackupsFiles",
+        "summary": "List backup archives, newest first",
+        "tags": [
+          "backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`nextCursor` from the previous page."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Page size, at most 200. Default 50."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupFileIndex"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/backups/files/{fileId}": {
+      "delete": {
+        "operationId": "deleteInstancesByIdBackupsFilesByFileId",
+        "summary": "Delete one archive",
+        "tags": [
+          "backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque id from the backup index."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupFileDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/backups/files/{fileId}/download": {
+      "get": {
+        "operationId": "getInstancesByIdBackupsFilesByFileIdDownload",
+        "summary": "Download one archive",
+        "description": "Streamed, never buffered. Supports a single `Range: bytes=start-end` so an interrupted download can resume.",
+        "tags": [
+          "backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque id from the backup index."
+          },
+          {
+            "name": "range",
+            "in": "header",
+            "required": false,
+            "description": "`bytes=start-[end]` or `bytes=-suffix`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Partial content",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Range not satisfiable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/backups/files/{fileId}/restore": {
+      "post": {
+        "operationId": "postInstancesByIdBackupsFilesByFileIdRestore",
+        "summary": "Restore the world from one archive",
+        "description": "Refused unless the server is offline, judged by a probe made now. The path handed to the restore script is the one the wrapper resolved from the id. A script that ran returns 200 with its output and exit code.",
+        "tags": [
+          "backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque id from the backup index."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreRefused"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/capabilities": {
+      "get": {
+        "operationId": "getInstancesByIdCapabilities",
+        "summary": "Which setup-suite artifacts exist for the instance",
+        "tags": [
+          "server"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/command": {
+      "post": {
+        "operationId": "postInstancesByIdCommand",
+        "summary": "Run a console command",
+        "tags": [
+          "control"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/configs": {
+      "get": {
+        "operationId": "getInstancesByIdConfigs",
+        "summary": "List editable config files",
+        "tags": [
+          "configs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ConfigFileInfo"
+                      }
+                    }
+                  },
+                  "required": [
+                    "files"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/configs/{fileId}": {
+      "get": {
+        "operationId": "getInstancesByIdConfigsByFileId",
+        "summary": "Read one config file with its etag and snapshots",
+        "tags": [
+          "configs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque id from the config index."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigFileRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "putInstancesByIdConfigsByFileId",
+        "summary": "Write one config file",
+        "description": "A snapshot of the previous content is taken first. `If-Match` must carry the etag from the read, so two editors cannot silently overwrite each other.",
+        "tags": [
+          "configs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque id from the config index."
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "description": "The etag of the version being replaced.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigWriteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigFileWritten"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/configs/{fileId}/revert": {
+      "post": {
+        "operationId": "postInstancesByIdConfigsByFileIdRevert",
+        "summary": "Restore a file from one of its snapshots",
+        "tags": [
+          "configs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque id from the config index."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigRevertRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigFileReverted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/health": {
+      "get": {
+        "operationId": "getInstancesByIdHealth",
+        "summary": "Three-state server health",
+        "description": "Process liveness and RCON responsiveness reported separately, plus systemd restart-loop detection.",
+        "tags": [
+          "server"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceHealth"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/info": {
+      "get": {
+        "operationId": "getInstancesByIdInfo",
+        "summary": "Wrapper version and host metrics",
+        "description": "The version handshake plus whole-machine CPU and memory, the server process, and per-directory disk usage.",
+        "tags": [
+          "server"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/level-name": {
+      "get": {
+        "operationId": "getInstancesByIdLevelName",
+        "summary": "World directory name",
+        "tags": [
+          "server"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "levelName": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "levelName"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/list": {
+      "get": {
+        "operationId": "getInstancesByIdList",
+        "summary": "Online players",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayerList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/logs/stream": {
+      "get": {
+        "operationId": "getInstancesByIdLogsStream",
+        "summary": "Live log lines as server-sent events",
+        "description": "Holds the connection open. Each log line is one `data:` event; comment lines (`:heartbeat`) keep idle connections alive.",
+        "tags": [
+          "logs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/logs/tail": {
+      "get": {
+        "operationId": "getInstancesByIdLogsTail",
+        "summary": "The end of the server log",
+        "tags": [
+          "logs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "lines",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Line count, clamped to 1..500. Default 10."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "output": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "output"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/mods": {
+      "get": {
+        "operationId": "getInstancesByIdMods",
+        "summary": "Slugs of the active mods",
+        "description": "Disabled mods are left out: they are not on the running server.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModSlugs"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "postInstancesByIdMods",
+        "summary": "Install a mod",
+        "description": "Runs the suite's add-mod script. A handled failure is `{ ok: false, error, code }` at 200.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModAddRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModAddResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/mods/{slug}": {
+      "delete": {
+        "operationId": "deleteInstancesByIdModsBySlug",
+        "summary": "Remove a mod",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Mod slug or project id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModRemoveResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/mods/{slug}/disable": {
+      "post": {
+        "operationId": "postInstancesByIdModsBySlugDisable",
+        "summary": "Disable a mod without uninstalling it",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Mod slug or project id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModToggleResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/mods/{slug}/enable": {
+      "post": {
+        "operationId": "postInstancesByIdModsBySlugEnable",
+        "summary": "Re-enable a disabled mod",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Mod slug or project id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModToggleResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/mods/{slug}/update": {
+      "post": {
+        "operationId": "postInstancesByIdModsBySlugUpdate",
+        "summary": "Update one mod",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Mod slug or project id."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModApplyResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/mods/installed": {
+      "get": {
+        "operationId": "getInstancesByIdModsInstalled",
+        "summary": "Installed mods with versions and enabled state",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstalledMods"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/mods/updates": {
+      "get": {
+        "operationId": "getInstancesByIdModsUpdates",
+        "summary": "Check installed mods for updates",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "mcVersion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Check against this Minecraft version."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModUpdateCheck"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "postInstancesByIdModsUpdates",
+        "summary": "Apply every available mod update",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModUpdatesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModApplyResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/running": {
+      "get": {
+        "operationId": "getInstancesByIdRunning",
+        "summary": "Whether the server process is up",
+        "description": "Legacy boolean. True for `online` and `unresponsive`; read /health to tell them apart.",
+        "tags": [
+          "server"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "running": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "running"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/scripts/run": {
+      "post": {
+        "operationId": "postInstancesByIdScriptsRun",
+        "summary": "Run one of the suite's management scripts",
+        "description": "A script that ran returns 200 with its output and exit code, including a non-zero exit. Only a failure to run it is a 500.",
+        "tags": [
+          "control"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/stats": {
+      "get": {
+        "operationId": "getInstancesByIdStats",
+        "summary": "Uuids that have a stats file",
+        "tags": [
+          "stats"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "uuids": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "uuids"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/stats/{uuid}": {
+      "delete": {
+        "operationId": "deleteInstancesByIdStatsByUuid",
+        "summary": "Delete one player's stats file",
+        "description": "`deleted` is false when there was no such file.",
+        "tags": [
+          "stats"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Player uuid, with dashes."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "deleted"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getInstancesByIdStatsByUuid",
+        "summary": "One player's stats file",
+        "tags": [
+          "stats"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Player uuid, with dashes."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stats": {
+                      "type": "object",
+                      "description": "A player's stats file, verbatim from the game.",
+                      "additionalProperties": true
+                    }
+                  },
+                  "required": [
+                    "stats"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/stats/bulk": {
+      "get": {
+        "operationId": "getInstancesByIdStatsBulk",
+        "summary": "Every player's stats in one response",
+        "tags": [
+          "stats"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stats": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "description": "A player's stats file, verbatim from the game.",
+                        "additionalProperties": true
+                      }
+                    }
+                  },
+                  "required": [
+                    "stats"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/tps": {
+      "get": {
+        "operationId": "getInstancesByIdTps",
+        "summary": "Ticks per second",
+        "description": "`tps` is null when the server did not report one.",
+        "tags": [
+          "server"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tps": {
+                      "type": "object",
+                      "nullable": true,
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/Tps"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "tps"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/usercache": {
+      "get": {
+        "operationId": "getInstancesByIdUsercache",
+        "summary": "usercache.json entries",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "usercache": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WhitelistEntry"
+                      }
+                    }
+                  },
+                  "required": [
+                    "usercache"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/whitelist": {
+      "get": {
+        "operationId": "getInstancesByIdWhitelist",
+        "summary": "whitelist.json entries",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "whitelist": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WhitelistEntry"
+                      }
+                    }
+                  },
+                  "required": [
+                    "whitelist"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/manifest": {
+      "get": {
+        "operationId": "getManifest",
+        "summary": "Features, routes and script actions this wrapper serves",
+        "description": "The route list is collected from the router at boot. Clients negotiate by feature name and version rather than by wrapper version.",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Manifest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "getMetrics",
+        "summary": "Request counters, timings and cache statistics",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Metrics"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key"
+      }
+    },
+    "schemas": {
+      "BackupDirInfo": {
+        "type": "object",
+        "properties": {
+          "dir": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "latestFile": {
+            "type": "string"
+          },
+          "latestMtimeMs": {
+            "type": "number"
+          },
+          "latestSizeBytes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "dir",
+          "count",
+          "latestFile",
+          "latestMtimeMs",
+          "latestSizeBytes"
+        ],
+        "additionalProperties": false
+      },
+      "BackupFileDeleted": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "ok",
+          "name",
+          "tier",
+          "sizeBytes"
+        ],
+        "additionalProperties": false
+      },
+      "BackupFileIndex": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupFileInfo"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "files",
+          "nextCursor",
+          "total"
+        ],
+        "additionalProperties": false
+      },
+      "BackupFileInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "number"
+          },
+          "mtimeMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "tier",
+          "name",
+          "sizeBytes",
+          "mtimeMs"
+        ],
+        "additionalProperties": false
+      },
+      "BackupSummary": {
+        "type": "object",
+        "properties": {
+          "dirs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupDirInfo"
+            }
+          },
+          "totalBytes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "dirs",
+          "totalBytes"
+        ],
+        "additionalProperties": false
+      },
+      "Capabilities": {
+        "type": "object",
+        "properties": {
+          "scripts": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "boolean"
+              },
+              "stop": {
+                "type": "boolean"
+              },
+              "restart": {
+                "type": "boolean"
+              },
+              "rollback": {
+                "type": "boolean"
+              },
+              "backup": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "start",
+              "stop",
+              "restart",
+              "rollback",
+              "backup",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "backups": {
+            "type": "boolean"
+          },
+          "restore": {
+            "type": "boolean"
+          },
+          "modManifest": {
+            "type": "boolean"
+          },
+          "variablesFile": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "scripts",
+          "backups",
+          "restore",
+          "modManifest",
+          "variablesFile"
+        ],
+        "additionalProperties": false
+      },
+      "CommandRequest": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "At most 1400 bytes, no control characters."
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "CommandResult": {
+        "type": "object",
+        "description": "The console's reply. `null` when the command went through the screen fallback, which has no reply channel.",
+        "properties": {
+          "result": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "additionalProperties": false
+      },
+      "ConfigFileInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "relPath": {
+            "type": "string"
+          },
+          "modId": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "number"
+          },
+          "mtimeMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "relPath",
+          "modId",
+          "format",
+          "sizeBytes",
+          "mtimeMs"
+        ],
+        "additionalProperties": false
+      },
+      "ConfigFileRead": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "etag": {
+            "type": "string"
+          },
+          "file": {
+            "$ref": "#/components/schemas/ConfigFileInfo"
+          },
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "text",
+          "etag",
+          "file",
+          "snapshots"
+        ],
+        "additionalProperties": false
+      },
+      "ConfigFileReverted": {
+        "type": "object",
+        "properties": {
+          "etag": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "etag"
+        ],
+        "additionalProperties": false
+      },
+      "ConfigFileWritten": {
+        "type": "object",
+        "properties": {
+          "etag": {
+            "type": "string"
+          },
+          "snapshot": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "etag",
+          "snapshot"
+        ],
+        "additionalProperties": false
+      },
+      "ConfigRevertRequest": {
+        "type": "object",
+        "properties": {
+          "snapshot": {
+            "type": "string",
+            "description": "A name from the file's `snapshots`."
+          }
+        },
+        "required": [
+          "snapshot"
+        ],
+        "additionalProperties": false
+      },
+      "ConfigWriteRequest": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "DiskUsage": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "number",
+            "nullable": true
+          },
+          "filesystem": {
+            "type": "object",
+            "properties": {
+              "mountPoint": {
+                "type": "string"
+              },
+              "usedPercent": {
+                "type": "number"
+              },
+              "availableBytes": {
+                "type": "number"
+              },
+              "totalBytes": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "mountPoint",
+              "usedPercent",
+              "availableBytes",
+              "totalBytes"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "path",
+          "sizeBytes",
+          "filesystem"
+        ],
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "description": "Every non-2xx body: `{ error }`.",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "HostInfo": {
+        "type": "object",
+        "properties": {
+          "process": {
+            "type": "object",
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProcessUsage"
+              }
+            ]
+          },
+          "host": {
+            "type": "object",
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/HostUsage"
+              }
+            ]
+          },
+          "disks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiskUsage"
+            }
+          }
+        },
+        "required": [
+          "process",
+          "host",
+          "disks"
+        ],
+        "additionalProperties": false
+      },
+      "HostUsage": {
+        "type": "object",
+        "properties": {
+          "cpuPercent": {
+            "type": "number"
+          },
+          "cpuCount": {
+            "type": "integer"
+          },
+          "memTotalBytes": {
+            "type": "number"
+          },
+          "memUsedBytes": {
+            "type": "number"
+          },
+          "uptimeSeconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "cpuPercent",
+          "cpuCount",
+          "memTotalBytes",
+          "memUsedBytes",
+          "uptimeSeconds"
+        ],
+        "additionalProperties": false
+      },
+      "InstalledMod": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "versionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "filename": {
+            "type": "string",
+            "nullable": true
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "slug",
+          "versionId",
+          "filename",
+          "enabled"
+        ],
+        "additionalProperties": false
+      },
+      "InstalledMods": {
+        "type": "object",
+        "properties": {
+          "gameVersion": {
+            "type": "string",
+            "nullable": true
+          },
+          "modLoader": {
+            "type": "string",
+            "nullable": true
+          },
+          "mtimeMs": {
+            "type": "number"
+          },
+          "mods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstalledMod"
+            }
+          }
+        },
+        "required": [
+          "gameVersion",
+          "modLoader",
+          "mtimeMs",
+          "mods"
+        ],
+        "additionalProperties": false
+      },
+      "InstanceHealth": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "online",
+              "unresponsive",
+              "offline"
+            ]
+          },
+          "processUp": {
+            "type": "boolean"
+          },
+          "probe": {
+            "type": "string",
+            "enum": [
+              "rcon",
+              "socket",
+              "process",
+              "screen",
+              "none"
+            ]
+          },
+          "rcon": {
+            "type": "object",
+            "properties": {
+              "configured": {
+                "type": "boolean"
+              },
+              "responsive": {
+                "type": "boolean"
+              },
+              "lastSuccessMsAgo": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "configured",
+              "responsive",
+              "lastSuccessMsAgo"
+            ],
+            "additionalProperties": false
+          },
+          "gamePort": {
+            "type": "integer",
+            "nullable": true
+          },
+          "restartCount": {
+            "type": "integer"
+          },
+          "unitFailed": {
+            "type": "boolean"
+          },
+          "checkedAt": {
+            "type": "number"
+          },
+          "ageMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "state",
+          "processUp",
+          "probe",
+          "rcon",
+          "gamePort",
+          "restartCount",
+          "unitFailed",
+          "checkedAt",
+          "ageMs"
+        ],
+        "additionalProperties": false
+      },
+      "InstanceInfo": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "host": {
+            "$ref": "#/components/schemas/HostInfo"
+          }
+        },
+        "required": [
+          "version",
+          "host"
+        ],
+        "additionalProperties": false
+      },
+      "InstanceList": {
+        "type": "object",
+        "properties": {
+          "instances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "instances"
+        ],
+        "additionalProperties": false
+      },
+      "Manifest": {
+        "type": "object",
+        "description": "What this wrapper serves; see src/contracts/manifest.ts.",
+        "properties": {
+          "wrapper": {
+            "type": "string"
+          },
+          "manifest": {
+            "type": "integer"
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "features": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "integer"
+                },
+                "summary": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "version",
+                "summary"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "scriptActions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "wrapper",
+          "manifest",
+          "routes",
+          "features",
+          "scriptActions"
+        ],
+        "additionalProperties": false
+      },
+      "Metrics": {
+        "type": "object",
+        "properties": {
+          "uptimeSeconds": {
+            "type": "number"
+          },
+          "memory": {
+            "type": "object",
+            "properties": {
+              "rss": {
+                "type": "number"
+              },
+              "heapTotal": {
+                "type": "number"
+              },
+              "heapUsed": {
+                "type": "number"
+              },
+              "external": {
+                "type": "number"
+              },
+              "arrayBuffers": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "rss",
+              "heapTotal",
+              "heapUsed",
+              "external",
+              "arrayBuffers"
+            ],
+            "additionalProperties": false
+          },
+          "inFlight": {
+            "type": "integer"
+          },
+          "peakInFlight": {
+            "type": "integer"
+          },
+          "rateLimitRejections": {
+            "type": "integer"
+          },
+          "rconReconnects": {
+            "type": "integer"
+          },
+          "eventLoopDelayMs": {
+            "type": "object",
+            "properties": {
+              "mean": {
+                "type": "number"
+              },
+              "p95": {
+                "type": "number"
+              },
+              "max": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "mean",
+              "p95",
+              "max"
+            ],
+            "additionalProperties": false
+          },
+          "cache": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "hits": {
+                  "type": "integer"
+                },
+                "misses": {
+                  "type": "integer"
+                },
+                "hitRate": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "hits",
+                "misses",
+                "hitRate"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "routes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "integer"
+                },
+                "errorCount": {
+                  "type": "integer"
+                },
+                "timeoutCount": {
+                  "type": "integer"
+                },
+                "p50Ms": {
+                  "type": "number"
+                },
+                "p95Ms": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "count",
+                "errorCount",
+                "timeoutCount",
+                "p50Ms",
+                "p95Ms"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "uptimeSeconds",
+          "memory",
+          "inFlight",
+          "peakInFlight",
+          "rateLimitRejections",
+          "rconReconnects",
+          "eventLoopDelayMs",
+          "cache",
+          "routes"
+        ],
+        "additionalProperties": false
+      },
+      "ModAddRequest": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "mcVersion": {
+            "type": "string"
+          },
+          "modLoader": {
+            "type": "string"
+          },
+          "versionId": {
+            "type": "string",
+            "description": "Pins one Modrinth version."
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "additionalProperties": false
+      },
+      "ModAddResult": {
+        "type": "object",
+        "description": "Result of add-mod.js. A handled failure is `{ ok: false, error, code }` at 200.",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "versionId": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "slug",
+                "action"
+              ],
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": true
+      },
+      "ModApplyResult": {
+        "type": "object",
+        "description": "Result of apply-updates.js and update-mod.js.",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "updated": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                },
+                "fromVersionId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "toVersionId": {
+                  "type": "string"
+                },
+                "filename": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "slug",
+                "toVersionId",
+                "filename"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "upToDate": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "slug",
+                "error"
+              ],
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": true
+      },
+      "ModRemoveResult": {
+        "type": "object",
+        "description": "Result of remove-mod.js.",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "removedFile": {
+            "type": "string",
+            "nullable": true
+          },
+          "orphanedDependencies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": true
+      },
+      "ModSlugs": {
+        "type": "object",
+        "properties": {
+          "slugs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mtimeMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "slugs",
+          "mtimeMs"
+        ],
+        "additionalProperties": false
+      },
+      "ModToggleResult": {
+        "type": "object",
+        "description": "Result of toggle-mod.js.",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string",
+            "nullable": true
+          },
+          "alreadyEnabled": {
+            "type": "boolean"
+          },
+          "alreadyDisabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": true
+      },
+      "ModUpdateCheck": {
+        "type": "object",
+        "description": "check-updates.js output, passed through.",
+        "properties": {
+          "mcVersion": {
+            "type": "string"
+          },
+          "modLoader": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "slug",
+                "status"
+              ],
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": [
+          "mcVersion",
+          "modLoader",
+          "results"
+        ],
+        "additionalProperties": true
+      },
+      "ModUpdatesRequest": {
+        "type": "object",
+        "properties": {
+          "mcVersion": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PlayerList": {
+        "type": "object",
+        "description": "`playerCount` and `maxPlayers` are strings; maxPlayers is \"?\" when unknown.",
+        "properties": {
+          "playerCount": {
+            "type": "string"
+          },
+          "maxPlayers": {
+            "type": "string"
+          },
+          "players": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "playerCount",
+          "maxPlayers",
+          "players"
+        ],
+        "additionalProperties": false
+      },
+      "ProcessUsage": {
+        "type": "object",
+        "properties": {
+          "pid": {
+            "type": "integer"
+          },
+          "cpuPercent": {
+            "type": "number"
+          },
+          "rssBytes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "pid",
+          "cpuPercent",
+          "rssBytes"
+        ],
+        "additionalProperties": false
+      },
+      "RestoreRefused": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "online",
+              "unresponsive",
+              "offline"
+            ]
+          }
+        },
+        "required": [
+          "error",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "ScriptResult": {
+        "type": "object",
+        "description": "A script that ran. A non-zero exit is still a 200.",
+        "properties": {
+          "output": {
+            "type": "string"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "exitCode": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "output",
+          "stderr",
+          "exitCode"
+        ],
+        "additionalProperties": false
+      },
+      "ScriptRunRequest": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "One of `scriptActions` in the manifest."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "description": "Up to five arguments of letters, digits, `.`, `@`, `_` and `-`."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "Tps": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "paper",
+              "vanilla"
+            ]
+          },
+          "tps1m": {
+            "type": "number"
+          },
+          "tps5m": {
+            "type": "number"
+          },
+          "tps15m": {
+            "type": "number"
+          },
+          "mspt": {
+            "type": "number"
+          },
+          "p50": {
+            "type": "number"
+          },
+          "p95": {
+            "type": "number"
+          },
+          "p99": {
+            "type": "number"
+          },
+          "raw": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "tps1m",
+          "raw"
+        ],
+        "additionalProperties": false
+      },
+      "WhitelistEntry": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "uuid": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "WrapperHealth": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "version"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

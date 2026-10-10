@@ -13,6 +13,18 @@
  */
 import type { FastifyInstance } from "fastify";
 
+import {
+  ConfigFileIndex,
+  ConfigFileRead,
+  ConfigFileReverted,
+  ConfigFileWritten,
+  ConfigRevertRequest,
+  ConfigWriteRequest,
+} from "../../../contracts/schemas.js";
+import {
+  errors,
+  instanceParams,
+} from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
 import {
   INSTANCE_PREFIX as P,
@@ -28,6 +40,12 @@ export function registerConfigFileRoutes(
 ): void {
   app.get<{ Params: InstanceParams }>(
     `${P}/configs`,
+    { schema: {
+      summary: "List editable config files",
+      tags: ["configs"],
+      params: instanceParams(),
+      response: { 200: ConfigFileIndex, ...errors(404, 500) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -41,6 +59,12 @@ export function registerConfigFileRoutes(
 
   app.get<{ Params: InstanceParams & { fileId: string } }>(
     `${P}/configs/:fileId`,
+    { schema: {
+      summary: "Read one config file with its etag and snapshots",
+      tags: ["configs"],
+      params: instanceParams({ fileId: "Opaque id from the config index." }),
+      response: { 200: ConfigFileRead, ...errors(400, 404, 500) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -65,7 +89,21 @@ export function registerConfigFileRoutes(
   app.put<{
     Params: InstanceParams & { fileId: string };
     Body: { text?: unknown };
-  }>(`${P}/configs/:fileId`, async (req, reply) => {
+  }>(`${P}/configs/:fileId`,
+    { schema: {
+      summary: "Write one config file",
+      description:
+        "A snapshot of the previous content is taken first. `If-Match` must " +
+        "carry the etag from the read, so two editors cannot silently " +
+        "overwrite each other.",
+      tags: ["configs"],
+      params: instanceParams({ fileId: "Opaque id from the config index." }),
+      requestHeaders: {
+        "if-match": { description: "The etag of the version being replaced.", required: true },
+      },
+      requestBody: { required: true, schema: ConfigWriteRequest },
+      response: { 200: ConfigFileWritten, ...errors(400, 404, 412, 413, 428, 500) },
+    } }, async (req, reply) => {
     const entry = resolve(req.params.id, reply);
     if (!entry) return;
     if (!FILE_ID_RE.test(req.params.fileId)) {
@@ -109,7 +147,14 @@ export function registerConfigFileRoutes(
   app.post<{
     Params: InstanceParams & { fileId: string };
     Body: { snapshot?: unknown };
-  }>(`${P}/configs/:fileId/revert`, async (req, reply) => {
+  }>(`${P}/configs/:fileId/revert`,
+    { schema: {
+      summary: "Restore a file from one of its snapshots",
+      tags: ["configs"],
+      params: instanceParams({ fileId: "Opaque id from the config index." }),
+      requestBody: { required: true, schema: ConfigRevertRequest },
+      response: { 200: ConfigFileReverted, ...errors(400, 404, 500) },
+    } }, async (req, reply) => {
     const entry = resolve(req.params.id, reply);
     if (!entry) return;
     if (!FILE_ID_RE.test(req.params.fileId)) {

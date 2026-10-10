@@ -8,14 +8,13 @@
  * *which* feature is missing, and says nothing at all in the other
  * direction (a wrapper newer than the bot).
  *
- * Why not just serve openapi.yaml: it is hand-maintained, and it has already
- * drifted — the 2.x spec described `/players`, `/logs`, `/action` and
- * `/whitelist/{username}`, none of which ever existed, while missing half
- * the real routes. A mismatch check reading that file would be confidently
- * wrong, which is worse than the honest 404 it replaces. So `routes` below
- * is collected from Fastify's own router at boot and cannot disagree with
- * what this process actually serves; `openapi.yaml` is checked against it in
- * CI instead of being trusted.
+ * Why not just serve the OpenAPI document: the 2.x spec was hand-maintained
+ * and described `/players`, `/logs`, `/action` and `/whitelist/{username}`,
+ * none of which ever existed, while missing half the real routes. A mismatch
+ * check reading that file would be confidently wrong, which is worse than the
+ * honest 404 it replaces. So `routes` below is collected from Fastify's own
+ * router at boot and cannot disagree with what this process actually serves.
+ * `openapi.json` is generated from that same census and drift-checked in CI.
  */
 import { SCRIPT_MAP } from "../instances/scripts.js";
 import { WRAPPER_VERSION } from "./version.js";
