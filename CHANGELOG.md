@@ -8,10 +8,21 @@ semver.
 
 ### Added
 
+- `GET /manifest` carries `scriptTimeoutsMs`, the per-action ceilings the wrapper enforces, so a caller can wait at least as long (`stop` 240 s, `restart` 420 s, `rollback` 300 s, `backup` 600 s).
+- `MC_BASH_PATH` and `MC_NODE_PATH` pin the interpreters used through `sudo` to absolute paths; documented with the `node` sudoers grant the mod routes need (`docs/sudoers-setup.md`).
+
 - **Bulk player stats** (`stats-bulk` manifest feature, v1): `GET /instances/:id/stats/bulk` returns every player's stats file in one response, bounded to 8 concurrent reads server-side. Replaces the pattern of one HTTP request per lifetime player a leaderboard build used to make against this wrapper — on a server with a few hundred players who have ever joined, that was a few hundred simultaneous requests landing on a 4-thread filesystem pool and a shared rate-limit budget at once. Cached 30s/300s, same as the bot's own `loadAllStats()` TTL.
 - **`GET /metrics`** (authenticated, exempt from rate limiting): per-route request count/p50/p95/error/timeout, current and peak in-flight requests, cache hit/miss counts, rate-limit rejections, RCON reconnect count, event-loop delay, and process memory/uptime. There was previously no way to answer what the wrapper was doing right before it became briefly unreachable.
 
 ### Changed
+
+- **Startup now fails** for an API key shorter than 32 characters and for a `linuxUser` that is not a valid Linux user name, each with a message naming the problem. Existing deployments with a short key must set a longer one (`openssl rand -hex 32`) in both the wrapper and the bot.
+- Mod slugs must start with a letter or digit (`^[a-zA-Z0-9][\w.-]{0,95}$`), and slugs reach the update scripts after a `--` separator so a value can never be read as an option.
+- Mutating mod scripts (add, remove, update, apply, enable, disable) run one at a time per instance, so concurrent requests no longer lose each other's manifest writes. Update checks are not queued.
+- `stop` and `restart` script timeouts rose from 60 s to 240 s and 420 s: the scripts warn players, count down, wait up to 60 s for the save and wait for systemd, and a kill mid-sequence could land after `save-off`.
+- The write rate limit (10 per minute per IP) is charged after authentication. Its table is swept when it grows large.
+- `remove-mod` results no longer have an `orphanedDependencies` field; it was always empty.
+- `.claude-flow/` is untracked and ignored.
 
 - The global rate limit (300 requests / 15 min, shared by every client and every route) is now two separate budgets: reads get 100/min, writes (scripts, mod mutations, restore, console commands) get a stricter 10/min. Both return `Retry-After`. The old flat budget was easy for a single leaderboard build or one open dashboard tab to exhaust well before the window rolled, and every request past it looked identical to the bot as "wrapper unreachable" rather than "rate limited".
 - Added a global in-flight request ceiling (32) returning a fast 503 + `Retry-After` above it, instead of accepting more work than the process can serve in time.
@@ -20,6 +31,13 @@ semver.
 - PM2's memory ceiling moved from `max_memory_restart: "256M"` to `768M` with a matching `--max-old-space-size`, and both the PM2 and systemd deployment paths now set `UV_THREADPOOL_SIZE=8`; the systemd unit gained a `MemoryMax` it never had.
 
 ### Fixed
+
+- RCON: the 10 s authentication timer stayed armed after a socket error or close and later tore down whatever newer, healthy connection existed, which showed up as flapping after an outage. The timer is now cleared on cleanup, and an authentication timeout reports `RCON auth timeout`.
+- Log streaming: a read window ending mid-line (the 1 MB clamp, or the server between two writes of one line) emitted a truncated line and then a bogus second one, which the chat bridge parsed. Only complete lines are sent now; the remainder is read on the next pass.
+- Log streams (`GET /logs/stream`) permanently held an in-flight slot each, because Fastify does not run `onResponse` for hijacked replies. After 32 streams over the wrapper's lifetime every route except `/health` and `/metrics` answered 503. The slot is released when the stream starts.
+- `AuthFailTracker.isBlocked` created an entry for every IP it was asked about, and aged-out entries were only swept above 10,000 IPs. Lookups no longer create entries and a sweep runs every minute.
+- Script children no longer inherit the wrapper's environment (`MC_API_KEY`, `RCON_PASSWORD_*`), and a child that ignores `SIGTERM` after a timeout is killed with `SIGKILL` ten seconds later.
+- Two `monitoredPaths` tests failed on Windows because they compared POSIX literals to `path.resolve` output.
 
 - `POST /instances/:id/backups/files/:fileId/restore` now answers `409` with `{ error, state }` unless instance health reports `offline` (`online` and `unresponsive` both refuse) using a fresh, uncached probe, and `503` when that probe cannot complete, instead of running `restore.sh` against a live world. Touched: `src/http/routes/instance/backups.ts`, `openapi.yaml`, `tests/http/backupRestore.test.ts`.
 - A sustained RCON outage had no backoff: every failed `send()` retried a full TCP connect + up to a 10s auth timeout on the very next call, and a burst of concurrent `/command` requests during that window could each hold a request open for up to 25s (the auth timeout plus the `screen stuff` fallback). The RCON client now fails fast for 2s after a failed connect instead.

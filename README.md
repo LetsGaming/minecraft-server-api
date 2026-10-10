@@ -102,6 +102,7 @@ The file is looked up at `./api-server-config.json` next to `index.js`, or where
 | `MC_PORT` | both modes | Overrides the HTTP listen port |
 | `RCON_PASSWORD_<ID>` | both modes | Per-instance RCON password override, e.g. `RCON_PASSWORD_SURVIVAL` |
 | `MC_BIND_HOST` | both modes | Listen address (default `0.0.0.0`) |
+| `MC_BASH_PATH` / `MC_NODE_PATH` | both modes | Absolute paths of `bash` and `node` for the scripts the wrapper runs through `sudo`. Unset means a `PATH` lookup. Must match the paths in your sudoers rules; see [`docs/sudoers-setup.md`](./docs/sudoers-setup.md) |
 | `MC_TRUST_PROXY` | both modes | `true` = trust `X-Forwarded-For` for client IPs — **only behind a proxy that sets it**; see [Security](#security) |
 | `MC_SSE_MAX_CLIENTS` | both modes | Max concurrent `/logs/stream` clients per instance (default `50`) |
 | `MC_ALLOW_NO_AUTH` | both modes | `true` = keyless **loopback-only** dev mode; see [Security](#security) |
@@ -126,8 +127,10 @@ See [`variables.example.txt`](./variables.example.txt) for all keys. The file is
 
 ## Security
 
+- **The API key must be at least 32 characters** (`openssl rand -hex 32`); the wrapper refuses to start with a shorter one. `linuxUser` must be a valid Linux user name (`^[a-z_][a-z0-9_-]{0,31}$`) because it is passed to `sudo -u`, and a bad value stops startup with a message naming the instance.
+- **Scripts run with a minimal environment.** The `sudo` child inherits only `PATH`, locale and terminal variables plus `HOME`, never `MC_API_KEY` or `RCON_PASSWORD_*`. A script that outlives its timeout gets `SIGTERM`, then `SIGKILL` ten seconds later.
 - **The wrapper refuses to start without an API key** (it can start/stop servers and run arbitrary console commands — keyless would mean unauthenticated remote control). For a local dev instance, `MC_ALLOW_NO_AUTH=true` disables auth **and forces binding to 127.0.0.1**.
-- API-key comparison is constant-time; failed authentications are limited to 20 per IP per 15 minutes on top of the global limit of 300 requests per 15 minutes.
+- API-key comparison is constant-time; failed authentications are limited to 20 per IP per 15 minutes. Reads are limited to 100 per minute per IP. Writes are limited to 10 per minute per IP and the budget is charged only after the request authenticated, so unauthenticated traffic from a shared address cannot drain it.
 - **Behind a reverse proxy, set `MC_TRUST_PROXY=true`** so the rate limiters see the real client IP from `X-Forwarded-For`. Without it every request carries the proxy's IP — one attacker's failed keys would lock out *all* clients, and per-attacker throttling is meaningless. Only enable it when the proxy **sets** (never merely forwards) the header; a spoofable header lets clients rotate limiter buckets at will. Default `false` is correct for direct binds.
 - SSE log streams are capped at 50 concurrent clients per instance (`MC_SSE_MAX_CLIENTS` to adjust); requests beyond the cap receive 503. Slow SSE consumers are skipped while their socket is backpressured instead of buffering unboundedly.
 - Request bodies are capped at 4 KB; script arguments and stats UUIDs go through strict allowlists; console commands are stripped of control characters before reaching `screen`.
