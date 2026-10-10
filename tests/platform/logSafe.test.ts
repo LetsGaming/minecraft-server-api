@@ -20,9 +20,10 @@ describe("logSafe", () => {
   });
 
   it("serialises non-strings", () => {
-    expect(logSafe({ a: "x
-y" })).toBe(JSON.stringify({ a: "x
-y" }));
+    const value = { a: ["x", "y"].join(String.fromCharCode(10)) };
+    const out = logSafe(value);
+    expect(out).toBe(JSON.stringify(value));
+    expect(out).not.toContain(String.fromCharCode(10));
   });
 });
 
