@@ -82,6 +82,45 @@ describe("log stream tailing", () => {
     expect(res.lines()).toEqual(["before", "x"]);
   });
 
+  it("holds back a trailing partial line until its newline arrives", async () => {
+    const res = connect();
+    fs.appendFileSync(logFile, "first\nsecond-par");
+    await until(() => res.chunks.length >= 1);
+    await new Promise((r) => setTimeout(r, 1_200));
+    expect(res.lines()).toEqual(["first"]);
+    fs.appendFileSync(logFile, "tial\nthird\n");
+    await until(() => res.chunks.length >= 3);
+    expect(res.lines()).toEqual(["first", "second-partial", "third"]);
+  });
+
+  it("does not split a multi-byte character across reads", async () => {
+    const res = connect();
+    const bytes = Buffer.from("grüße\n");
+    fs.appendFileSync(logFile, bytes.subarray(0, 4));
+    await new Promise((r) => setTimeout(r, 1_200));
+    fs.appendFileSync(logFile, bytes.subarray(4));
+    await until(() => res.chunks.length >= 1);
+    expect(res.lines()).toEqual(["grüße"]);
+  });
+
+  it("strips the carriage return of CRLF lines", async () => {
+    const res = connect();
+    fs.appendFileSync(logFile, "win\r\n");
+    await until(() => res.chunks.length >= 1);
+    expect(res.lines()).toEqual(["win"]);
+  });
+
+  it("keeps lines intact when the 1 MB read window ends mid-line", async () => {
+    const res = connect();
+    const total = 11_000;
+    const lines = Array.from({ length: total }, (_, i) =>
+      `${String(i).padStart(6, "0")} ${"x".repeat(93)}`,
+    );
+    fs.appendFileSync(logFile, lines.join("\n") + "\n");
+    await until(() => res.chunks.length >= total, 8_000);
+    expect(res.lines()).toEqual(lines);
+  });
+
   it("refuses unknown instances and clients beyond the cap", () => {
     expect(api.addClient("nope", new FakeRes() as unknown as ServerResponse)).toBe(false);
     vi.stubEnv("MC_SSE_MAX_CLIENTS", "1");
