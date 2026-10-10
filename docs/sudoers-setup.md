@@ -115,5 +115,7 @@ the exact path sudo prints against your sudoers line.
 ## server-setup deployments
 
 [minecraft-server-setup](https://github.com/LetsGaming/minecraft-server-setup)
-writes these entries automatically during provisioning; this document
+does not write these entries for you. Its own `docs/sudoers-setup.md` has the
+sudoers file for a setup-suite install (systemctl rules plus the script and
+`node` grants); this document explains what the wrapper itself executes and
 matters for standalone installations and for auditing what was set up.
