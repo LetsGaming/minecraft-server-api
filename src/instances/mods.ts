@@ -25,7 +25,7 @@ import path from "path";
 
 import { cached } from "../platform/cache.js";
 import { mapLimit } from "../platform/concurrency.js";
-import { runAsInstanceUser } from "../platform/spawn.js";
+import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
 
 /** Above the 4-thread libuv pool, low enough to leave it room for other work. */
 const EXISTS_CONCURRENCY = 8;
@@ -230,7 +230,7 @@ export function createMods(cfg: InstanceConfig) {
 
     const result = await runAsInstanceUser(
       cfg,
-      ["node", scriptPath, ...args, "--json"],
+      [interpreter("node"), scriptPath, ...args, "--json"],
       { timeoutMs: SCRIPT_TIMEOUTS[which], label },
     );
 

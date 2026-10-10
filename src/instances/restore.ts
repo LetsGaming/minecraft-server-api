@@ -20,7 +20,7 @@
 import fsp from "fs/promises";
 import path from "path";
 
-import { runAsInstanceUser } from "../platform/spawn.js";
+import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { ScriptResult } from "../contracts/wire.js";
 import { RESTORE_SCRIPT } from "./scripts.js";
@@ -60,7 +60,7 @@ export function createRestore(cfg: InstanceConfig) {
     // Shares the spawn dance with the script and mod runners; see
     // platform/spawn.ts. The path here is one the wrapper resolved, never one
     // the client described — the reason restore is not a /scripts/run action.
-    return runAsInstanceUser(cfg, ["bash", script, "--file", absPath, "--y"], {
+    return runAsInstanceUser(cfg, [interpreter("bash"), script, "--file", absPath, "--y"], {
       timeoutMs: RESTORE_TIMEOUT_MS,
       label: "Restore",
     });

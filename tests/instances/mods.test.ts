@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import path from "path";
+import type * as SpawnModule from "../../src/platform/spawn.js";
 
 import { makeFixture, touch, type Fixture } from "../helpers/instanceFixture.js";
 
 const runMock = vi.hoisted(() => vi.fn());
-vi.mock("../../src/platform/spawn.js", () => ({ runAsInstanceUser: runMock }));
+vi.mock("../../src/platform/spawn.js", async (orig) => ({
+  ...(await orig<typeof SpawnModule>()),
+  runAsInstanceUser: runMock,
+}));
 
 import { createMods, MOD_VALIDATION } from "../../src/instances/mods.js";
 

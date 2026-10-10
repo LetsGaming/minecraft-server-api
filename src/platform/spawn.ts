@@ -17,6 +17,7 @@
  * every argument reaches the child exactly as passed.
  */
 import { spawn } from "child_process";
+import path from "path";
 
 /** What the callers below need of the instance, and nothing more. */
 export interface SudoSpawnTarget {
@@ -53,6 +54,60 @@ const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const TRUNCATION_MARKER = "\n…(output truncated)\n";
 
 /**
+ * Environment variables the child may inherit. Everything else, notably
+ * MC_API_KEY and the RCON_PASSWORD_* secrets, stays in the wrapper: a script
+ * has no need for them, and sudo's env_reset is not guaranteed to be on.
+ */
+const ENV_ALLOWLIST = [
+  "PATH",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TZ",
+  "TERM",
+] as const;
+
+/** How long a SIGTERMed process group gets to exit before SIGKILL. */
+const KILL_GRACE_MS = 10_000;
+
+/**
+ * Optional absolute interpreter paths, so a sudoers grant can name exact
+ * binaries instead of whatever PATH resolves to. Unset means PATH lookup.
+ */
+const INTERPRETER_ENV = {
+  bash: "MC_BASH_PATH",
+  node: "MC_NODE_PATH",
+} as const;
+
+export type Interpreter = keyof typeof INTERPRETER_ENV;
+
+export function interpreter(name: Interpreter): string {
+  return process.env[INTERPRETER_ENV[name]] || name;
+}
+
+/** Messages for interpreter overrides that are set but not absolute POSIX paths. */
+export function interpreterEnvProblems(): string[] {
+  const problems: string[] = [];
+  for (const envName of Object.values(INTERPRETER_ENV)) {
+    const value = process.env[envName];
+    if (value && !path.posix.isAbsolute(value)) {
+      problems.push(`${envName} must be an absolute path, got "${value}".`);
+    }
+  }
+  return problems;
+}
+
+function childEnv(linuxUser: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { HOME: `/home/${linuxUser}` };
+  for (const key of ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
+/**
  * Run `sudo -n -u <linuxUser> <command…>` and collect its output.
  *
  * `command` is the full argv *after* the sudo user flags — e.g.
@@ -78,7 +133,7 @@ export function runAsInstanceUser(
       ["-n", "-u", target.linuxUser, ...command],
       {
         cwd: target.scriptsDir,
-        env: { ...process.env, HOME: `/home/${target.linuxUser}` },
+        env: childEnv(target.linuxUser),
         stdio: ["ignore", "pipe", "pipe"],
         // Process-group leader, so the timeout below can SIGTERM the whole
         // tree (the real work runs as a grandchild once sudo re-execs as the
@@ -92,14 +147,21 @@ export function runAsInstanceUser(
     let stdoutTruncated = false;
     let stderrTruncated = false;
     let killed = false;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const signalGroup = (signal: NodeJS.Signals): void => {
+      try {
+        process.kill(-child.pid!, signal);
+      } catch {
+        child.kill(signal);
+      }
+    };
 
     const timer = setTimeout(() => {
       killed = true;
-      try {
-        process.kill(-child.pid!, "SIGTERM");
-      } catch {
-        child.kill("SIGTERM");
-      }
+      signalGroup("SIGTERM");
+      killTimer = setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS);
+      killTimer.unref();
       reject(
         new Error(
           `${label} timed out after ${timeoutMs / 1000}s\n\n` +
@@ -124,6 +186,7 @@ export function runAsInstanceUser(
     });
 
     child.on("close", (code) => {
+      if (killTimer) clearTimeout(killTimer);
       if (killed) return;
       clearTimeout(timer);
 
@@ -154,6 +217,7 @@ export function runAsInstanceUser(
 
     child.on("error", (err) => {
       clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
       reject(new Error(`Failed to start ${label.toLowerCase()}: ${err.message}`));
     });
   });

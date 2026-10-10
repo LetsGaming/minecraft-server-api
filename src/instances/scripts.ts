@@ -9,7 +9,7 @@ import fsp from "fs/promises";
 import path from "path";
 
 import { cached } from "../platform/cache.js";
-import { runAsInstanceUser } from "../platform/spawn.js";
+import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { Capabilities, ScriptResult } from "../contracts/wire.js";
 
@@ -133,7 +133,7 @@ async function runScript(action: string, args?: string[]): Promise<ScriptResult>
   // The spawn dance (process-group leader, group-kill timeout, sudoers
   // detection, [sudo] filtering) lives in platform/spawn.ts, shared with the
   // restore and mod runners so the security-relevant details cannot drift.
-  return runAsInstanceUser(cfg, ["bash", scriptPath, ...(args ?? [])], {
+  return runAsInstanceUser(cfg, [interpreter("bash"), scriptPath, ...(args ?? [])], {
     timeoutMs,
     label: "Script",
   });

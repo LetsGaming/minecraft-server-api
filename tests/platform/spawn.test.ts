@@ -4,7 +4,7 @@ import { FakeChild } from "../helpers/fakeChild.js";
 const spawnMock = vi.hoisted(() => vi.fn());
 vi.mock("child_process", () => ({ spawn: spawnMock }));
 
-import { runAsInstanceUser } from "../../src/platform/spawn.js";
+import { interpreter, interpreterEnvProblems, runAsInstanceUser } from "../../src/platform/spawn.js";
 
 const target = { linuxUser: "minecraft", scriptsDir: "/srv/scripts" };
 const opts = { timeoutMs: 1_000, label: "Script" };
@@ -102,5 +102,74 @@ describe("runAsInstanceUser timeout", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await assertion;
     expect(killChild).toHaveBeenCalledWith("SIGTERM");
+  });
+});
+
+describe("runAsInstanceUser environment", () => {
+  it("passes only allowlisted variables, never the API key or RCON passwords", () => {
+    vi.stubEnv("MC_API_KEY", "super-secret-key");
+    vi.stubEnv("RCON_PASSWORD_SURVIVAL", "rcon-secret");
+    vi.stubEnv("PATH", "/usr/bin:/bin");
+    vi.stubEnv("LANG", "C.UTF-8");
+    try {
+      void runAsInstanceUser(target, ["bash", "x"], opts);
+      const env = spawnMock.mock.calls[0]![2].env as Record<string, string>;
+      expect(env.PATH).toBe("/usr/bin:/bin");
+      expect(env.LANG).toBe("C.UTF-8");
+      expect(env.HOME).toBe("/home/minecraft");
+      expect(env.MC_API_KEY).toBeUndefined();
+      expect(Object.keys(env).some((k) => k.startsWith("RCON_PASSWORD"))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("runAsInstanceUser SIGKILL escalation", () => {
+  it("SIGKILLs the group when it outlives the grace period after SIGTERM", async () => {
+    vi.useFakeTimers();
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const p = runAsInstanceUser(target, ["bash", "x"], opts);
+    const assertion = expect(p).rejects.toThrow(/timed out/);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await assertion;
+    expect(kill).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(kill).toHaveBeenLastCalledWith(-4242, "SIGKILL");
+  });
+
+  it("does not SIGKILL a group that exited after SIGTERM", async () => {
+    vi.useFakeTimers();
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const p = runAsInstanceUser(target, ["bash", "x"], opts);
+    const assertion = expect(p).rejects.toThrow(/timed out/);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await assertion;
+    child.close(143);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(kill).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("interpreter", () => {
+  it("defaults to a PATH lookup", () => {
+    vi.stubEnv("MC_BASH_PATH", "");
+    vi.stubEnv("MC_NODE_PATH", "");
+    expect(interpreter("bash")).toBe("bash");
+    expect(interpreter("node")).toBe("node");
+    vi.unstubAllEnvs();
+  });
+
+  it("uses the configured absolute path", () => {
+    vi.stubEnv("MC_NODE_PATH", "/usr/bin/node");
+    expect(interpreter("node")).toBe("/usr/bin/node");
+    expect(interpreterEnvProblems()).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it("reports a relative override as a configuration problem", () => {
+    vi.stubEnv("MC_BASH_PATH", "bin/bash");
+    expect(interpreterEnvProblems()[0]).toMatch(/MC_BASH_PATH must be an absolute path/);
+    vi.unstubAllEnvs();
   });
 });

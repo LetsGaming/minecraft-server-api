@@ -21,6 +21,7 @@ import path from "path";
 import { parseVarsFile } from "./parseVars.js";
 import { REPO_ROOT } from "../platform/paths.js";
 import { log } from "../platform/logger.js";
+import { interpreterEnvProblems } from "../platform/spawn.js";
 import type { AppConfig, InstanceConfig } from "./types.js";
 
 const DEFAULT_CONFIG_FILE = path.join(REPO_ROOT, "api-server-config.json");
@@ -74,7 +75,7 @@ const LINUX_USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
  * decision because of the explicit no-auth dev mode.
  */
 export function validateConfig(config: AppConfig): string[] {
-  const problems: string[] = [];
+  const problems: string[] = [...interpreterEnvProblems()];
   if (config.API_KEY && config.API_KEY.length < MIN_API_KEY_LENGTH) {
     problems.push(
       `The API key is ${config.API_KEY.length} characters; at least ${MIN_API_KEY_LENGTH} are required. ` +
