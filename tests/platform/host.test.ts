@@ -5,6 +5,7 @@
  * app.test.ts through the unmocked /info route.
  */
 import { describe, it, expect, vi } from "vitest";
+import path from "path";
 
 vi.mock("../../src/platform/exec.js", () => ({ execSafe: vi.fn() }));
 
@@ -172,15 +173,15 @@ describe("monitoredPaths", () => {
   };
 
   it("reports the server dir alone without a backups path", () => {
-    expect(monitoredPaths(base)).toEqual(["/opt/mc/survival"]);
+    expect(monitoredPaths(base)).toEqual([path.resolve("/opt/mc/survival")]);
   });
 
   it("adds the backups dir and dedupes resolved paths", () => {
     expect(
       monitoredPaths({ ...base, backupsPath: "/opt/mc/survival/../backups" }),
-    ).toEqual(["/opt/mc/survival", "/opt/mc/backups"]);
+    ).toEqual([path.resolve("/opt/mc/survival"), path.resolve("/opt/mc/backups")]);
     expect(
       monitoredPaths({ ...base, backupsPath: "/opt/mc/survival/." }),
-    ).toEqual(["/opt/mc/survival"]);
+    ).toEqual([path.resolve("/opt/mc/survival")]);
   });
 });
