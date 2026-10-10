@@ -17,6 +17,7 @@ import { createOperations } from "../instances/operations.js";
 import { initLogStream, type LogStreamAPI } from "../platform/logStream.js";
 import { log } from "../platform/logger.js";
 import { beginRequest, endRequest, getInFlight, recordRateLimitRejection, recordRequest } from "../platform/metrics.js";
+import type { RouteSpec } from "../contracts/openapi.js";
 import type { AppConfig } from "../config/types.js";
 import type { InstanceEntry } from "./routes/instance/shared.js";
 
@@ -36,6 +37,8 @@ export interface BuildOptions {
 
 export interface BuiltApp {
   app: FastifyInstance;
+  /** Every registered route with its schema, for generating openapi.json. */
+  routeSpecs: readonly RouteSpec[];
   logStreamAPI: LogStreamAPI;
 }
 
@@ -87,6 +90,7 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
   // process actually serves. Must be added before any route is
   // registered — onRoute only fires for registrations that follow it.
   const routes: string[] = [];
+  const routeSpecs: RouteSpec[] = [];
   app.addHook("onRoute", (route) => {
     const methods = Array.isArray(route.method) ? route.method : [route.method];
     for (const method of methods) {
@@ -94,6 +98,7 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
       // separate capability and would only add noise for the bot.
       if (method === "HEAD") continue;
       routes.push(`${method} ${route.url}`);
+      routeSpecs.push({ method, url: route.url, schema: route.schema });
     }
   });
 
@@ -187,5 +192,5 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
     void reply.status(404).send({ error: "Not found" });
   });
 
-  return { app, logStreamAPI };
+  return { app, logStreamAPI, routeSpecs };
 }
