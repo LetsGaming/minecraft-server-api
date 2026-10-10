@@ -370,13 +370,28 @@ export const ConfigFileInfo = named(
     id: string,
     relPath: string,
     modId: string,
-    format: string,
+    format: {
+      ...string,
+      description:
+        "File type by extension: toml, json, json5, properties, cfg, conf, ini, yaml, text or snbt.",
+    },
+    editable: {
+      ...boolean,
+      description: "False when the file is listed but cannot be read or written.",
+    },
+    tooLarge: boolean,
     sizeBytes: number,
     mtimeMs: number,
   }),
 );
 
-export const ConfigFileIndex = object({ files: array(ConfigFileInfo) });
+export const ConfigFileIndex = object({
+  files: array(ConfigFileInfo),
+  truncated: {
+    ...boolean,
+    description: "The listing was cut at the file limit; some files are missing.",
+  },
+});
 
 export const ConfigFileRead = named(
   "ConfigFileRead",

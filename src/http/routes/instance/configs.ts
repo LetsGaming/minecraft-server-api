@@ -1,14 +1,14 @@
 /**
  * Mod config files: index, read, write, snapshots, revert.
  *
- * Every route addresses a file by the opaque id from the index — no path, no
+ * Every route addresses a file by the opaque id from the index, no path, no
  * filename, nothing a client could shape into one. See instances/configFiles.ts
  * for why that is structural rather than a validation rule.
  *
  * The wrapper does not know what a TOML file means. It serves bytes and takes
  * bytes; parsing, schema derivation and the splicing writer all live upstream
  * in the bot's `configfmt`. That split is deliberate: a wrapper release is a
- * deploy on every Minecraft host, so format quirks — and there are many — must
+ * deploy on every Minecraft host, so format quirks, and there are many, must
  * be fixable without touching game servers.
  */
 import type { FastifyInstance } from "fastify";
@@ -25,6 +25,7 @@ import {
   errors,
   instanceParams,
 } from "../../../contracts/routeSchema.js";
+import { MAX_CONFIG_BYTES } from "../../../instances/configFiles.js";
 import { internalError } from "../../errors.js";
 import {
   INSTANCE_PREFIX as P,
@@ -50,7 +51,7 @@ export function registerConfigFileRoutes(
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
       try {
-        return { files: await entry.indexConfigFiles() };
+        return await entry.indexConfigFiles();
       } catch (err) {
         return internalError(reply, `configs ${req.params.id}`, err);
       }
@@ -63,7 +64,7 @@ export function registerConfigFileRoutes(
       summary: "Read one config file with its etag and snapshots",
       tags: ["configs"],
       params: instanceParams({ fileId: "Opaque id from the config index." }),
-      response: { 200: ConfigFileRead, ...errors(400, 404, 500) },
+      response: { 200: ConfigFileRead, ...errors(400, 404, 413, 500) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
@@ -74,6 +75,9 @@ export function registerConfigFileRoutes(
       try {
         const found = await entry.readConfigFile(req.params.fileId);
         if (!found) return reply.status(404).send({ error: "Config not found" });
+        if ("tooLarge" in found) {
+          return reply.status(413).send({ error: "Config file is too large to edit" });
+        }
         return {
           text: found.text,
           etag: found.etag,
@@ -90,7 +94,9 @@ export function registerConfigFileRoutes(
     Params: InstanceParams & { fileId: string };
     Body: { text?: unknown };
   }>(`${P}/configs/:fileId`,
-    { schema: {
+    // JSON escaping can roughly double a text of MAX_CONFIG_BYTES, so the
+    // route accepts that much; the writer enforces the real limit on the text.
+    { bodyLimit: MAX_CONFIG_BYTES * 2 + 1024, schema: {
       summary: "Write one config file",
       description:
         "A snapshot of the previous content is taken first. `If-Match` must " +
