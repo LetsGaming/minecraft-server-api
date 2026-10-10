@@ -21,6 +21,7 @@ import path from "path";
 import { parseVarsFile } from "./parseVars.js";
 import { REPO_ROOT } from "../platform/paths.js";
 import { log } from "../platform/logger.js";
+import { interpreterEnvProblems } from "../platform/spawn.js";
 import type { AppConfig, InstanceConfig } from "./types.js";
 
 const DEFAULT_CONFIG_FILE = path.join(REPO_ROOT, "api-server-config.json");
@@ -63,6 +64,33 @@ function normalisePort(id: string, raw: unknown): number {
     `Instance "${id}": rconPort ${JSON.stringify(raw)} is not a valid port (1-65535) — using 25575`,
   );
   return 25575;
+}
+
+export const MIN_API_KEY_LENGTH = 32;
+const LINUX_USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
+
+/**
+ * Problems that make a resolved config unsafe to run, as operator-facing
+ * messages. An empty API key is not reported here: index.ts owns that
+ * decision because of the explicit no-auth dev mode.
+ */
+export function validateConfig(config: AppConfig): string[] {
+  const problems: string[] = [...interpreterEnvProblems()];
+  if (config.API_KEY && config.API_KEY.length < MIN_API_KEY_LENGTH) {
+    problems.push(
+      `The API key is ${config.API_KEY.length} characters; at least ${MIN_API_KEY_LENGTH} are required. ` +
+        `Generate one with: openssl rand -hex 32`,
+    );
+  }
+  for (const [id, inst] of Object.entries(config.instances)) {
+    if (!LINUX_USER_RE.test(inst.linuxUser)) {
+      problems.push(
+        `Instance "${id}": linuxUser ${JSON.stringify(inst.linuxUser)} is not a valid Linux user name ` +
+          `(lowercase letters, digits, "_" and "-", starting with a letter or "_").`,
+      );
+    }
+  }
+  return problems;
 }
 
 function normaliseInstance(id: string, raw: RawInstance): InstanceConfig {
@@ -188,6 +216,9 @@ export function loadConfig(): AppConfig {
     const override = process.env[envKey];
     if (override) inst.rconPassword = override;
   }
+
+  const problems = validateConfig(config);
+  if (problems.length) fail(`Invalid configuration:\n  - ${problems.join("\n  - ")}`);
 
   return config;
 }

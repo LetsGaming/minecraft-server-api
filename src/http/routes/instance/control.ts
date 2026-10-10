@@ -5,6 +5,18 @@
  */
 import type { FastifyInstance } from "fastify";
 
+import {
+  CommandRequest,
+  CommandResult,
+  ScriptResult,
+  ScriptRunRequest,
+} from "../../../contracts/schemas.js";
+import {
+  errors,
+  instanceParams,
+} from "../../../contracts/routeSchema.js";
+import { log } from "../../../platform/logger.js";
+import { CommandDeliveryError } from "../../../instances/commands.js";
 import { internalError } from "../../errors.js";
 import { validateArgs } from "../../validation.js";
 import { checkConsoleCommand, COMMAND_ERRORS } from "../../consoleCommand.js";
@@ -21,6 +33,15 @@ export function registerControlRoutes(
 ): void {
   app.post<{ Params: InstanceParams; Body: { command?: unknown } }>(
     `${P}/command`,
+    {
+      schema: {
+        summary: "Run a console command",
+        tags: ["control"],
+        params: instanceParams(),
+        requestBody: { required: true, schema: CommandRequest },
+        response: { 200: CommandResult, ...errors(400, 404, 500, 502) },
+      },
+    },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -31,8 +52,14 @@ export function registerControlRoutes(
       }
 
       try {
-        return { result: await entry.sendCommand(check.command) };
+        return await entry.sendCommand(check.command);
       } catch (err) {
+        if (err instanceof CommandDeliveryError) {
+          log.warn(req.params.id, `command not delivered: ${err.message}`);
+          return reply.status(502).send({
+            error: "Command could not be delivered to the server",
+          });
+        }
         return internalError(reply, `command ${req.params.id}`, err);
       }
     },
@@ -41,36 +68,51 @@ export function registerControlRoutes(
   app.post<{
     Params: InstanceParams;
     Body: { action?: unknown; args?: unknown };
-  }>(`${P}/scripts/run`, async (req, reply) => {
-    const entry = resolve(req.params.id, reply);
-    if (!entry) return;
-    const action = req.body?.action;
-    const args = req.body?.args;
-    if (!action || typeof action !== "string") {
-      return reply.status(400).send({ error: "Missing action" });
-    }
-    // SEC-05 companion: an unknown action is CLIENT input error, not an
-    // internal failure — reject it here with a helpful 400 (echoing the
-    // client's own input is safe) instead of letting runScript throw
-    // into the generic-500 path and losing the feedback the bot
-    // surfaces to admins.
-    if (!(action in SCRIPT_MAP)) {
-      return reply
-        .status(400)
-        .send({ error: `Unknown script action: ${action.slice(0, 64)}` });
-    }
-    // F-001: validate args before passing to spawn()
-    if (!validateArgs(args)) {
-      return reply.status(400).send({
-        error:
-          "Invalid args: must be an array of up to 5 strings containing only " +
-          "alphanumeric, '.', '@', or '-' characters (max 128 chars each)",
-      });
-    }
-    try {
-      return await entry.runScript(action, args);
-    } catch (err) {
-      return internalError(reply, `scripts/run ${req.params.id}`, err);
-    }
-  });
+  }>(
+    `${P}/scripts/run`,
+    {
+      schema: {
+        summary: "Run one of the suite's management scripts",
+        description:
+          "A script that ran returns 200 with its output and exit code, " +
+          "including a non-zero exit. Only a failure to run it is a 500.",
+        tags: ["control"],
+        params: instanceParams(),
+        requestBody: { required: true, schema: ScriptRunRequest },
+        response: { 200: ScriptResult, ...errors(400, 404, 500) },
+      },
+    },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      const action = req.body?.action;
+      const args = req.body?.args;
+      if (!action || typeof action !== "string") {
+        return reply.status(400).send({ error: "Missing action" });
+      }
+      // SEC-05 companion: an unknown action is CLIENT input error, not an
+      // internal failure — reject it here with a helpful 400 (echoing the
+      // client's own input is safe) instead of letting runScript throw
+      // into the generic-500 path and losing the feedback the bot
+      // surfaces to admins.
+      if (!(action in SCRIPT_MAP)) {
+        return reply
+          .status(400)
+          .send({ error: `Unknown script action: ${action.slice(0, 64)}` });
+      }
+      // F-001: validate args before passing to spawn()
+      if (!validateArgs(args)) {
+        return reply.status(400).send({
+          error:
+            "Invalid args: must be an array of up to 5 strings containing only " +
+            "alphanumeric, '.', '@', or '-' characters (max 128 chars each)",
+        });
+      }
+      try {
+        return await entry.runScript(action, args);
+      } catch (err) {
+        return internalError(reply, `scripts/run ${req.params.id}`, err);
+      }
+    },
+  );
 }

@@ -10,12 +10,26 @@
 const WINDOW_MS = 60_000;
 const MAX_WRITES = 10;
 
+/** Above this many tracked IPs, entries with no hit inside the window are dropped. */
+const SWEEP_THRESHOLD = 10_000;
+
 export class WriteRateLimiter {
   private readonly hits = new Map<string, number[]>();
+
+  size(): number {
+    return this.hits.size;
+  }
+
+  private sweep(now: number): void {
+    for (const [ip, list] of this.hits) {
+      if (list.every((t) => now - t >= WINDOW_MS)) this.hits.delete(ip);
+    }
+  }
 
   /** True and does not record when the IP is already at budget. */
   tryAcquire(ip: string): boolean {
     const now = Date.now();
+    if (this.hits.size > SWEEP_THRESHOLD) this.sweep(now);
     const list = (this.hits.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
     if (list.length >= MAX_WRITES) {
       this.hits.set(ip, list);

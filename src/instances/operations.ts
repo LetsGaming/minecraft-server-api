@@ -60,6 +60,11 @@ export function createOperations(cfg: InstanceConfig) {
     return health.get();
   }
 
+  /** Uncached health probe; rejects when it cannot complete. */
+  async function getFreshHealth(): Promise<InstanceHealth> {
+    return health.getFresh();
+  }
+
   /**
    * Legacy boolean. It now means "the server process is up", which is what
    * every caller always wanted it to mean — it used to mean "RCON answered
@@ -92,6 +97,7 @@ export function createOperations(cfg: InstanceConfig) {
     ...scripts,
     getLevelName: world.getLevelName,
     getHealth,
+    getFreshHealth,
     isRunning,
   };
 }

@@ -11,6 +11,17 @@
 import { createReadStream } from "fs";
 import type { FastifyInstance } from "fastify";
 
+import type { ServerState } from "../../../contracts/wire.js";
+import {
+  BackupFileDeleted,
+  BackupFileIndex,
+  ScriptResult,
+} from "../../../contracts/schemas.js";
+import {
+  errors,
+  instanceParams,
+  queryParams,
+} from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
 import {
   INSTANCE_PREFIX as P,
@@ -59,7 +70,17 @@ export function registerBackupFileRoutes(
   app.get<{
     Params: InstanceParams;
     Querystring: { cursor?: string; limit?: string };
-  }>(`${P}/backups/files`, async (req, reply) => {
+  }>(`${P}/backups/files`,
+    { schema: {
+      summary: "List backup archives, newest first",
+      tags: ["backups"],
+      params: instanceParams(),
+      querystring: queryParams({
+        cursor: "`nextCursor` from the previous page.",
+        limit: "Page size, at most 200. Default 50.",
+      }),
+      response: { 200: BackupFileIndex, ...errors(404, 500) },
+    } }, async (req, reply) => {
     const entry = resolve(req.params.id, reply);
     if (!entry) return;
 
@@ -76,6 +97,23 @@ export function registerBackupFileRoutes(
 
   app.get<{ Params: InstanceParams & { fileId: string } }>(
     `${P}/backups/files/:fileId/download`,
+    { schema: {
+      summary: "Download one archive",
+      description:
+        "Streamed, never buffered. Supports a single `Range: bytes=start-end` " +
+        "so an interrupted download can resume.",
+      tags: ["backups"],
+      params: instanceParams({ fileId: "Opaque id from the backup index." }),
+      requestHeaders: {
+        range: { description: "`bytes=start-[end]` or `bytes=-suffix`.", required: false },
+      },
+      produces: { 200: "application/octet-stream", 206: "application/octet-stream" },
+      response: {
+        200: { type: "string" },
+        206: { type: "string" },
+        ...errors(400, 404, 416),
+      },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -135,6 +173,12 @@ export function registerBackupFileRoutes(
 
   app.delete<{ Params: InstanceParams & { fileId: string } }>(
     `${P}/backups/files/:fileId`,
+    { schema: {
+      summary: "Delete one archive",
+      tags: ["backups"],
+      params: instanceParams({ fileId: "Opaque id from the backup index." }),
+      response: { 200: BackupFileDeleted, ...errors(400, 404, 500) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -155,6 +199,17 @@ export function registerBackupFileRoutes(
 
   app.post<{ Params: InstanceParams & { fileId: string } }>(
     `${P}/backups/files/:fileId/restore`,
+    { schema: {
+      summary: "Restore the world from one archive",
+      description:
+        "Refused unless the server is offline, judged by a probe made now. " +
+        "The path handed to the restore script is the one the wrapper " +
+        "resolved from the id. A script that ran returns 200 with its output " +
+        "and exit code.",
+      tags: ["backups"],
+      params: instanceParams({ fileId: "Opaque id from the backup index." }),
+      response: { 200: ScriptResult, ...errors(400, 404, 409, 500, 503) },
+    } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -167,6 +222,26 @@ export function registerBackupFileRoutes(
       if (!found) return reply.status(404).send({ error: "Backup not found" });
 
       try {
+        // Replacing the world under a running server corrupts it. "offline" is
+        // the only state that proves no JVM holds the files; an unresponsive
+        // server is still a running one.
+        // The cached health answer can be seconds stale, so this asks for a
+        // probe made now, and refuses when none can be completed.
+        let state: ServerState;
+        try {
+          ({ state } = await entry.getFreshHealth());
+        } catch {
+          return reply.status(503).send({
+            error: "Could not verify that the server is offline. Try again shortly.",
+          });
+        }
+        if (state !== "offline") {
+          return reply.status(409).send({
+            error: "Server must be offline to restore a backup. Stop it first.",
+            state,
+          });
+        }
+
         // The path handed to the script is the one the wrapper resolved, never
         // one the client described. That is the whole reason restore is not a
         // /scripts/run action (see instances/restore.ts).

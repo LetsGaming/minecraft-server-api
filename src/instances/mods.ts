@@ -24,8 +24,15 @@ import fsp from "fs/promises";
 import path from "path";
 
 import { cached } from "../platform/cache.js";
-import { mapLimit } from "../platform/concurrency.js";
-import { runAsInstanceUser } from "../platform/spawn.js";
+import { createMutex, mapLimit } from "../platform/concurrency.js";
+import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
+import {
+  COMPAT_MAX_RUNNING_GLOBAL,
+  createCompatSlots,
+  createModCompat,
+} from "./modCompat.js";
+
+const compatSlots = createCompatSlots(COMPAT_MAX_RUNNING_GLOBAL);
 
 /** Above the 4-thread libuv pool, low enough to leave it room for other work. */
 const EXISTS_CONCURRENCY = 8;
@@ -65,8 +72,12 @@ const SCRIPT_TIMEOUTS: Record<keyof typeof SCRIPTS, number> = {
   toggle: 15_000,
 };
 
-/** A slug or project id, as recorded in downloaded_versions.json. */
-const SLUG_RE = /^[\w.-]{1,96}$/;
+/**
+ * A slug or project id, as recorded in downloaded_versions.json. The first
+ * character is alphanumeric so a slug can never read as a flag (Modrinth
+ * project ids are mixed-case base62, hence both cases).
+ */
+const SLUG_RE = /^[a-zA-Z0-9][\w.-]{0,95}$/;
 /** A Minecraft version like 1.21.4 or 1.21. */
 const MC_VERSION_RE = /^[\w.-]{1,20}$/;
 /** A loader like fabric, forge, quilt, neoforge. */
@@ -210,6 +221,7 @@ export function createMods(cfg: InstanceConfig) {
   function invalidateModsCache(): void {
     modSlugsCache.invalidate();
     listInstalledCache.invalidate();
+    modCompat.invalidate();
   }
 
   /**
@@ -218,9 +230,10 @@ export function createMods(cfg: InstanceConfig) {
    * (a genuine internal failure → 500). Returns the parsed object otherwise —
    * including a script's own `{ok:false}`, which the route reports at 200.
    */
-  async function runModScript(
+  async function runModScriptUnlocked(
     which: keyof typeof SCRIPTS,
-    args: string[],
+    flags: string[],
+    positionals: string[],
     label: string,
   ): Promise<unknown> {
     const scriptPath = path.join(cfg.scriptsDir, SCRIPTS[which]);
@@ -230,7 +243,8 @@ export function createMods(cfg: InstanceConfig) {
 
     const result = await runAsInstanceUser(
       cfg,
-      ["node", scriptPath, ...args, "--json"],
+      // Positionals follow `--`, so a value can never be read as an option.
+      [interpreter("node"), scriptPath, ...flags, "--json", "--", ...positionals],
       { timeoutMs: SCRIPT_TIMEOUTS[which], label },
     );
 
@@ -250,6 +264,51 @@ export function createMods(cfg: InstanceConfig) {
     }
   }
 
+  /**
+   * Every script except "check" read-modify-writes downloaded_versions.json
+   * (and moves jars), so two of them running at once can lose each other's
+   * update. They run one at a time per instance; a long apply therefore delays
+   * a queued toggle until it finishes. "check" only reads, so it bypasses the
+   * queue.
+   */
+  const writeLock = createMutex();
+
+  function runModScript(
+    which: keyof typeof SCRIPTS,
+    flags: string[],
+    positionals: string[],
+    label: string,
+  ): Promise<unknown> {
+    if (which === "check") {
+      return runModScriptUnlocked(which, flags, positionals, label);
+    }
+    return writeLock.run(() => runModScriptUnlocked(which, flags, positionals, label));
+  }
+
+  const modCompat = createModCompat({
+    slots: compatSlots,
+    async readInstalled() {
+      const manifest = await readManifest();
+      if (!manifest) return null;
+      return {
+        modLoader: manifest.data.modLoader,
+        mods: Object.entries(manifest.data.mods).map(([slug, entry]) => ({
+          slug,
+          versionId: typeof entry === "string" ? entry : (entry.versionId ?? null),
+        })),
+      };
+    },
+    async checkOne(slug, mcVersion) {
+      if (!SLUG_RE.test(slug)) throw new Error("Not a valid mod slug");
+      return runModScript(
+        "check",
+        [`--mcVersion=${mcVersion}`, `--only=${slug}`],
+        [],
+        "Check mod compatibility",
+      );
+    },
+  });
+
   function assertOkField(value: unknown, label: string): void {
     if (
       typeof value !== "object" ||
@@ -266,26 +325,26 @@ export function createMods(cfg: InstanceConfig) {
     modLoader?: string,
     versionId?: string,
   ): Promise<ModAddResult> {
-    const args = [slug];
-    if (mcVersion) args.push(`--mcVersion=${mcVersion}`);
-    if (modLoader) args.push(`--modLoader=${modLoader}`);
-    if (versionId) args.push(`--versionId=${versionId}`);
-    const parsed = await runModScript("add", args, "Add mod");
+    const flags: string[] = [];
+    if (mcVersion) flags.push(`--mcVersion=${mcVersion}`);
+    if (modLoader) flags.push(`--modLoader=${modLoader}`);
+    if (versionId) flags.push(`--versionId=${versionId}`);
+    const parsed = await runModScript("add", flags, [slug], "Add mod");
     assertOkField(parsed, "Add mod");
     return parsed as ModAddResult;
   }
 
   async function removeMod(slug: string): Promise<ModRemoveResult> {
-    const parsed = await runModScript("remove", [slug], "Remove mod");
+    const parsed = await runModScript("remove", [], [slug], "Remove mod");
     assertOkField(parsed, "Remove mod");
     return parsed as ModRemoveResult;
   }
 
   async function checkUpdates(mcVersion?: string): Promise<ModUpdateCheck> {
-    const args = mcVersion ? [`--mcVersion=${mcVersion}`] : [];
+    const flags = mcVersion ? [`--mcVersion=${mcVersion}`] : [];
     // check-updates.js emits { mcVersion, modLoader, results } with no ok
     // field — a check cannot "fail"; a mod that errored is one result.
-    const parsed = await runModScript("check", args, "Check mod updates");
+    const parsed = await runModScript("check", flags, [], "Check mod updates");
     if (
       typeof parsed !== "object" ||
       parsed === null ||
@@ -297,29 +356,29 @@ export function createMods(cfg: InstanceConfig) {
   }
 
   async function applyUpdates(mcVersion?: string): Promise<ModApplyResult> {
-    const args = mcVersion ? [`--mcVersion=${mcVersion}`] : [];
-    const parsed = await runModScript("apply", args, "Apply mod updates");
+    const flags = mcVersion ? [`--mcVersion=${mcVersion}`] : [];
+    const parsed = await runModScript("apply", flags, [], "Apply mod updates");
     assertOkField(parsed, "Apply mod updates");
     return parsed as ModApplyResult;
   }
 
   /** Update a single installed mod to its latest compatible build. */
   async function updateMod(slug: string): Promise<ModApplyResult> {
-    const parsed = await runModScript("updateOne", [slug], "Update mod");
+    const parsed = await runModScript("updateOne", [], [slug], "Update mod");
     assertOkField(parsed, "Update mod");
     return parsed as ModApplyResult;
   }
 
   /** Disable an installed mod without uninstalling it (see toggle-mod.js). */
   async function disableMod(slug: string): Promise<ModToggleResult> {
-    const parsed = await runModScript("toggle", [slug, "--disable"], "Disable mod");
+    const parsed = await runModScript("toggle", ["--disable"], [slug], "Disable mod");
     assertOkField(parsed, "Disable mod");
     return parsed as ModToggleResult;
   }
 
   /** Re-enable a previously disabled mod. */
   async function enableMod(slug: string): Promise<ModToggleResult> {
-    const parsed = await runModScript("toggle", [slug, "--enable"], "Enable mod");
+    const parsed = await runModScript("toggle", ["--enable"], [slug], "Enable mod");
     assertOkField(parsed, "Enable mod");
     return parsed as ModToggleResult;
   }
@@ -330,6 +389,8 @@ export function createMods(cfg: InstanceConfig) {
     addMod,
     removeMod,
     checkUpdates,
+    startModCompat: modCompat.start,
+    getModCompat: modCompat.get,
     applyUpdates,
     updateMod,
     disableMod,

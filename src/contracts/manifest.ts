@@ -8,16 +8,15 @@
  * *which* feature is missing, and says nothing at all in the other
  * direction (a wrapper newer than the bot).
  *
- * Why not just serve openapi.yaml: it is hand-maintained, and it has already
- * drifted — the 2.x spec described `/players`, `/logs`, `/action` and
- * `/whitelist/{username}`, none of which ever existed, while missing half
- * the real routes. A mismatch check reading that file would be confidently
- * wrong, which is worse than the honest 404 it replaces. So `routes` below
- * is collected from Fastify's own router at boot and cannot disagree with
- * what this process actually serves; `openapi.yaml` is checked against it in
- * CI instead of being trusted.
+ * Why not just serve the OpenAPI document: the 2.x spec was hand-maintained
+ * and described `/players`, `/logs`, `/action` and `/whitelist/{username}`,
+ * none of which ever existed, while missing half the real routes. A mismatch
+ * check reading that file would be confidently wrong, which is worse than the
+ * honest 404 it replaces. So `routes` below is collected from Fastify's own
+ * router at boot and cannot disagree with what this process actually serves.
+ * `openapi.json` is generated from that same census and drift-checked in CI.
  */
-import { SCRIPT_MAP } from "../instances/scripts.js";
+import { SCRIPT_MAP, SCRIPT_TIMEOUTS } from "../instances/scripts.js";
 import { WRAPPER_VERSION } from "./version.js";
 
 /**
@@ -140,6 +139,17 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "driving the suite's scripts/update/*.js as the instance user, plus " +
       "a richer installed list.",
   },
+  "mod-compat": {
+    version: 1,
+    routes: [
+      "POST /instances/:id/mods/compat",
+      "GET /instances/:id/mods/compat/:jobId",
+    ],
+    summary:
+      "Checking which installed mods have a release for a target Minecraft " +
+      "version, as a background job that reports progress and partial " +
+      "results. Needs a setup suite whose check-updates.js accepts --only.",
+  },
   backups: {
     version: 1,
     routes: ["GET /instances/:id/backups"],
@@ -178,9 +188,14 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "action: the path is resolved here, never sent by the client.",
   },
   "rcon-command": {
-    version: 1,
+    // v2: the reply carries `via` and `sent`, and a command neither RCON nor
+    // the screen fallback delivered is a 502 instead of `200 {result:null}`.
+    // `result` is unchanged, so a v1 reader still works.
+    version: 2,
     routes: ["POST /instances/:id/command"],
-    summary: "Running a console command on the server.",
+    summary:
+      "Running a console command on the server, reporting which channel " +
+      "carried it and failing when none did.",
   },
   scripts: {
     version: 1,
@@ -205,6 +220,8 @@ export interface Manifest {
   routes: string[];
   features: Record<string, { version: number; summary: string }>;
   scriptActions: string[];
+  /** Milliseconds the wrapper lets each script action run before killing it. */
+  scriptTimeoutsMs: Record<string, number>;
 }
 
 /**
@@ -225,5 +242,8 @@ export function buildManifest(routes: readonly string[]): Manifest {
     routes: [...routes].sort(),
     features,
     scriptActions: Object.keys(SCRIPT_MAP).sort(),
+    scriptTimeoutsMs: Object.fromEntries(
+      Object.keys(SCRIPT_MAP).map((action) => [action, SCRIPT_TIMEOUTS[action] ?? 120_000]),
+    ),
   };
 }

@@ -2,7 +2,7 @@
 
 Lightweight HTTP wrapper for managing Minecraft server instances — start/stop/restart/rollback, console commands, stats, logs (including a live SSE stream), whitelist, backup listing/download/restore, host metrics — over a REST API secured with an API key.
 
-Intended as the remote backend for [minecraft-bot](https://github.com/LetsGaming/minecraft-bot) (one wrapper per host, any number of instances), but usable from any HTTP client. The full API is specified in [`openapi.yaml`](./openapi.yaml).
+Intended as the remote backend for [minecraft-bot](https://github.com/LetsGaming/minecraft-bot) (one wrapper per host, any number of instances), but usable from any HTTP client. The full API is specified in [`openapi.json`](./openapi.json), generated from the router.
 
 ---
 
@@ -52,7 +52,7 @@ When setting up a server with [minecraft-server-setup](https://github.com/LetsGa
 }
 ```
 
-The setup script clones this repo, installs dependencies, builds, and creates a systemd service automatically.
+The key must be at least 32 characters (see [Security](#security)). The setup script clones this repo, installs dependencies, builds, and creates a systemd service automatically.
 
 ---
 
@@ -102,6 +102,7 @@ The file is looked up at `./api-server-config.json` next to `index.js`, or where
 | `MC_PORT` | both modes | Overrides the HTTP listen port |
 | `RCON_PASSWORD_<ID>` | both modes | Per-instance RCON password override, e.g. `RCON_PASSWORD_SURVIVAL` |
 | `MC_BIND_HOST` | both modes | Listen address (default `0.0.0.0`) |
+| `MC_BASH_PATH` / `MC_NODE_PATH` | both modes | Absolute paths of `bash` and `node` for the scripts the wrapper runs through `sudo`. Unset means a `PATH` lookup. Must match the paths in your sudoers rules; see [`docs/sudoers-setup.md`](./docs/sudoers-setup.md) |
 | `MC_TRUST_PROXY` | both modes | `true` = trust `X-Forwarded-For` for client IPs — **only behind a proxy that sets it**; see [Security](#security) |
 | `MC_SSE_MAX_CLIENTS` | both modes | Max concurrent `/logs/stream` clients per instance (default `50`) |
 | `MC_ALLOW_NO_AUTH` | both modes | `true` = keyless **loopback-only** dev mode; see [Security](#security) |
@@ -126,11 +127,14 @@ See [`variables.example.txt`](./variables.example.txt) for all keys. The file is
 
 ## Security
 
+- **The API key must be at least 32 characters** (`openssl rand -hex 32`); the wrapper refuses to start with a shorter one. `linuxUser` must be a valid Linux user name (`^[a-z_][a-z0-9_-]{0,31}$`) because it is passed to `sudo -u`, and a bad value stops startup with a message naming the instance.
+- **Scripts run with a minimal environment.** The `sudo` child inherits only `PATH`, locale and terminal variables plus `HOME`, never `MC_API_KEY` or `RCON_PASSWORD_*`. A script that outlives its timeout gets `SIGTERM`, then `SIGKILL` ten seconds later.
 - **The wrapper refuses to start without an API key** (it can start/stop servers and run arbitrary console commands — keyless would mean unauthenticated remote control). For a local dev instance, `MC_ALLOW_NO_AUTH=true` disables auth **and forces binding to 127.0.0.1**.
-- API-key comparison is constant-time; failed authentications are limited to 20 per IP per 15 minutes on top of the global limit of 300 requests per 15 minutes.
+- API-key comparison is constant-time; failed authentications are limited to 20 per IP per 15 minutes. Reads are limited to 100 per minute per IP. Writes are limited to 10 per minute per IP and the budget is charged only after the request authenticated, so unauthenticated traffic from a shared address cannot drain it.
 - **Behind a reverse proxy, set `MC_TRUST_PROXY=true`** so the rate limiters see the real client IP from `X-Forwarded-For`. Without it every request carries the proxy's IP — one attacker's failed keys would lock out *all* clients, and per-attacker throttling is meaningless. Only enable it when the proxy **sets** (never merely forwards) the header; a spoofable header lets clients rotate limiter buckets at will. Default `false` is correct for direct binds.
-- SSE log streams are capped at 50 concurrent clients per instance (`MC_SSE_MAX_CLIENTS` to adjust); requests beyond the cap receive 503. Slow SSE consumers are skipped while their socket is backpressured instead of buffering unboundedly.
-- Request bodies are capped at 4 KB; script arguments and stats UUIDs go through strict allowlists; console commands are stripped of control characters before reaching `screen`.
+- SSE log streams are capped at 50 concurrent clients per instance (`MC_SSE_MAX_CLIENTS` to adjust); requests beyond the cap receive 503. More than 32 requests in flight at once (other than `/health` and `/metrics`) also get a fast 503 with `Retry-After`. Slow SSE consumers are skipped while their socket is backpressured instead of buffering unboundedly.
+- Request bodies are capped at 4 KB, except `PUT /instances/:id/configs/:fileId`, which accepts about twice the 1 MB config cap. Console commands are limited to 1400 bytes and rejected with `400` when they contain control characters (the `screen` fallback strips them again as a second guard). Script arguments (at most 5, each `[\w.@-]{1,128}`), mod slugs and stats UUIDs go through strict allowlists.
+- Wrapper log lines escape control, separator and bidi characters and are length-capped, so text from a script or a player cannot forge a log line.
 - `500` responses carry a fixed `{ "error": "Internal server error" }` body; failure detail (paths, stderr) goes to the wrapper log only.
 - **No route accepts a filesystem path.** Backup archives are addressed by an opaque `id` handed out by `/backups/files`, which the wrapper resolves against a listing it builds itself — so the path handed to a download or a restore script is always one this process chose, never one a client described. Traversal is not defended against here; it is unrepresentable. A `realpath` containment check sits behind that for the symlink case a `startsWith` guard cannot see.
 - **`restore.sh` is deliberately not a `scripts/run` action.** Script arguments are validated against an allowlist that forbids `/`, precisely so a client cannot hand a path to a spawned shell — and restore needs an absolute path. Loosening that validator to fit would give the guard away for every script at once, so restore gets its own route and resolves the path itself.
@@ -139,7 +143,7 @@ See [`variables.example.txt`](./variables.example.txt) for all keys. The file is
 
 ## API Reference
 
-All routes except `GET /health` require the `x-api-key` header. Error bodies are always `{ "error": "<message>" }`. Full schemas: [`openapi.yaml`](./openapi.yaml).
+All routes except `GET /health` require the `x-api-key` header. Error bodies are always `{ "error": "<message>" }`. Full request and response schemas: [`openapi.json`](./openapi.json), generated by `npm run openapi:generate` and never edited by hand.
 
 | Method | Path | Description |
 |---|---|---|
@@ -147,6 +151,7 @@ All routes except `GET /health` require the `x-api-key` header. Error bodies are
 | `GET` | `/manifest` | **What this wrapper can do** — routes, features, script actions; generated from the router |
 | `GET` | `/instances` | Configured instance ids |
 | `GET` | `/instances/:id/info` | **Wrapper version + host metrics** (server process RAM/CPU, disk usage) — the bot's startup handshake |
+| `GET` | `/instances/:id/health` | **Three-state health** (`online`, `unresponsive`, `offline`) plus systemd restart-loop signals |
 | `GET` | `/instances/:id/running` | Is the server process alive? |
 | `GET` | `/instances/:id/list` | Online player count and names |
 | `GET` | `/instances/:id/tps` | TPS data (requires RCON) |
@@ -154,17 +159,33 @@ All routes except `GET /health` require the `x-api-key` header. Error bodies are
 | `GET` | `/instances/:id/whitelist` | Whitelist entries |
 | `GET` | `/instances/:id/usercache` | **usercache.json** — every player the server has seen, filtered to `{name, uuid}` |
 | `GET` | `/instances/:id/mods` | Mod slugs from `downloaded_versions.json` (404 without a manifest) |
+| `GET` | `/instances/:id/mods/installed` | Installed mods with version, filename and `enabled` |
+| `POST` | `/instances/:id/mods` | Install a mod (`slug`, optional `mcVersion`, `modLoader`, `versionId`) |
+| `DELETE` | `/instances/:id/mods/:slug` | Remove a mod |
+| `POST` | `/instances/:id/mods/:slug/update` | Update one mod |
+| `POST` | `/instances/:id/mods/:slug/disable` | Disable a mod without uninstalling it |
+| `POST` | `/instances/:id/mods/:slug/enable` | Re-enable a disabled mod |
+| `GET` | `/instances/:id/mods/updates` | Check installed mods for updates |
+| `POST` | `/instances/:id/mods/updates` | Apply every available mod update |
+| `POST` | `/instances/:id/mods/compat` | Start a background check of which installed mods have a release for `mcVersion` (202 with `jobId`; one job per version, cached 6 h, `refresh` skips the cache; `429` when too many jobs run or `refresh` repeats within 30 s) |
+| `GET` | `/instances/:id/mods/compat/:jobId` | Progress, partial results and the final per-mod availability of that check (jobs are kept about 15 minutes) |
+| `GET` | `/instances/:id/configs` | Editable mod config files, addressed by opaque id |
+| `GET` | `/instances/:id/configs/:fileId` | One config file with its etag and snapshots |
+| `PUT` | `/instances/:id/configs/:fileId` | Write a config file (`If-Match` required; a snapshot is taken first) |
+| `POST` | `/instances/:id/configs/:fileId/revert` | Restore a config file from a snapshot |
 | `GET` | `/instances/:id/backups` | Backup tier metadata (counts and the newest archive per tier) |
 | `GET` | `/instances/:id/backups/files` | **Individual archives**, newest first, cursor-paged |
+| `DELETE` | `/instances/:id/backups/files/:fileId` | **Delete one archive** |
 | `GET` | `/instances/:id/backups/files/:fileId/download` | **Download one archive** — streamed, `Content-Length` set, `Range` supported |
-| `POST` | `/instances/:id/backups/files/:fileId/restore` | **Restore the world** from one archive (destructive) |
+| `POST` | `/instances/:id/backups/files/:fileId/restore` | **Restore the world** from one archive (destructive). Returns `409` unless the server is `offline` |
 | `GET` | `/instances/:id/capabilities` | Which setup-suite artifacts exist |
 | `GET` | `/instances/:id/logs/tail?lines=N` | Last N lines of `latest.log` (1–500) |
 | `GET` | `/instances/:id/logs/stream` | SSE stream of new log lines |
 | `GET` | `/instances/:id/stats` | Player UUIDs with stats files (resolves `<level>/stats` or `<level>/players/stats`) |
+| `GET` | `/instances/:id/stats/bulk` | Every player's stats in one response |
 | `GET` | `/instances/:id/stats/:uuid` | Stats JSON for one player |
 | `DELETE` | `/instances/:id/stats/:uuid` | Delete a player's stats file (bot `/server prune-stats`) |
-| `POST` | `/instances/:id/command` | Send a console command (RCON, screen fallback) |
+| `POST` | `/instances/:id/command` | Send a console command (RCON, screen fallback); replies `{ result, via, sent, rconError? }`, `502` when neither RCON nor `screen` delivered it |
 | `POST` | `/instances/:id/scripts/run` | Run a management script (`start`, `stop`, `restart`, `rollback`, `backup`, `status`) |
 
 ### Compatibility with minecraft-bot
@@ -177,14 +198,22 @@ serve.
 
 What that means in practice:
 
-- **Older bot, newer wrapper**: fine. New routes are additive and every 2.x and
-  3.x route is unchanged.
+- **Older bot, newer wrapper**: new routes are additive, but a release can
+  change an existing contract. Those changes are marked **BREAKING** in
+  [`CHANGELOG.md`](./CHANGELOG.md), so read it before upgrading the wrapper
+  ahead of the bot.
 - **Newer bot, older wrapper**: degrades per feature rather than failing. A bot
-  on a pre-3.3.0 wrapper hides its dashboard Backups tab and its Rollback
-  button instead of offering controls that error.
+  facing a wrapper without `backup-files` hides its dashboard Backups tab, and
+  one without the `rollback` script capability hides its Rollback button,
+  instead of offering controls that error.
 
-The bot's dashboard wants **3.3.0** for `backup-files`, `backup-restore` and the
-`rollback` script action. Nothing else in the bot requires it.
+Read the `features` block of `GET /manifest` for what a given wrapper offers;
+each feature carries its own contract version, and `summary` says what a client
+loses without it. The changelog names the manifest features each release adds or changes.
+
+The wrapper ships first: bump the wrapper, then the bot that consumes the new
+shape. `openapi.json` is the machine-readable contract the bot generates its
+wire types from; `src/contracts/schemas.ts` is its source.
 
 ---
 
@@ -196,6 +225,8 @@ npm run build       # tsc → dist/
 npm run typecheck   # src + tests, no emit
 npm run lint
 npm test            # vitest
+npm run openapi:generate   # rebuild openapi.json from the router
+npm run openapi:check      # fail when the committed openapi.json is stale
 ```
 
 The test suite pins the security invariants (auth semantics, UUID/args allowlists, path-traversal guards, RCON packet validation, the screen-command sanitiser) and exercises every route against a scaffolded instance directory, including the SSE stream over a real socket.

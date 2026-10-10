@@ -1,12 +1,75 @@
 /**
- * The wire contract the bot consumes (minecraft-bot:
- * src/core/utils/serverAccess.ts) — field names and types must stay in
- * lockstep with the bot's expectations. Historical quirks (string
- * playerCount, "?" maxPlayers) are part of that contract and deliberately
- * preserved.
+ * The response types the route layer returns. Their runtime counterparts are
+ * the JSON Schemas in schemas.ts, which Fastify serializes every reply
+ * through and which become openapi.json; the bot generates its own types from
+ * that document. tests/contracts/wireAgreement.test.ts fails when a type here
+ * and its schema disagree. Historical quirks (string playerCount, "?"
+ * maxPlayers) are part of the contract and deliberately preserved.
  *
  * Config shapes live in config/types.ts; this file is responses only.
  */
+
+export interface WrapperHealth {
+  ok: boolean;
+  version: string;
+}
+
+export interface CommandResult {
+  /** null when the command went through the screen fallback, which has no reply channel. */
+  result: string | null;
+  via: "rcon" | "screen";
+  sent: boolean;
+  /** Set when RCON failed and the screen fallback carried the command. */
+  rconError?: string;
+}
+
+export interface ModSlugs {
+  slugs: string[];
+  /** mtime of downloaded_versions.json. */
+  mtimeMs: number;
+}
+
+export interface BackupFileDeleted {
+  ok: boolean;
+  name: string;
+  tier: string;
+  sizeBytes: number;
+}
+
+export interface ConfigFileInfo {
+  /** Opaque handle; the only file reference a client may send back. */
+  id: string;
+  /** Display path relative to the server directory. */
+  relPath: string;
+  /** Best guess at the owning mod; a grouping hint, not an identity. */
+  modId: string;
+  /** File type by extension: toml, json, json5, properties, cfg, conf, ini, yaml, text or snbt. */
+  format: string;
+  /** False when the file is listed but cannot be read or written. */
+  editable: boolean;
+  tooLarge: boolean;
+  sizeBytes: number;
+  mtimeMs: number;
+}
+
+export interface ConfigFileIndex {
+  files: ConfigFileInfo[];
+  /** The listing was cut at the file limit; some files are missing. */
+  truncated: boolean;
+}
+
+export interface ConfigFileRead {
+  text: string;
+  etag: string;
+  file: ConfigFileInfo;
+  /** Snapshot names, newest first. */
+  snapshots: string[];
+}
+
+export interface ConfigFileWritten {
+  etag: string;
+  snapshot: string;
+}
 
 export interface PlayerList {
   playerCount: string;
@@ -103,19 +166,19 @@ export interface Capabilities {
     start: boolean;
     stop: boolean;
     restart: boolean;
-    /** rollback.sh — added in wrapper 3.3.0. */
+    /** rollback.sh. */
     rollback: boolean;
     backup: boolean;
     status: boolean;
   };
   backups: boolean;
-  /** backup/restore.sh — added in wrapper 3.3.0. Not a SCRIPT_MAP action. */
+  /** backup/restore.sh. Not a SCRIPT_MAP action. */
   restore: boolean;
   modManifest: boolean;
   variablesFile: boolean;
 }
 
-/** One archive in the backups directory (wrapper >= 3.3.0). */
+/** One archive in the backups directory. */
 export interface BackupFileInfo {
   /** Opaque handle; the only file reference a client may send back. */
   id: string;
@@ -197,11 +260,6 @@ export interface ModRemoveResult {
   ok: boolean;
   slug?: string;
   removedFile?: string | null;
-  /**
-   * Required dependencies of the removed mod that nothing else depends on.
-   * Reported, never auto-removed — the operator decides.
-   */
-  orphanedDependencies?: string[];
   error?: string;
   code?: string;
 }
@@ -211,6 +269,51 @@ export interface ModUpdateCheck {
   mcVersion: string;
   modLoader: string;
   results: Array<{ slug: string; status: string; [key: string]: unknown }>;
+}
+
+export type ModCompatAvailability = "available" | "unavailable" | "unknown";
+
+export interface ModCompatMod {
+  slug: string;
+  name?: string;
+  availability: ModCompatAvailability;
+  currentVersionId?: string;
+  target?: {
+    versionId: string;
+    versionName: string;
+    datePublished: string;
+    downloadUrl?: string;
+  };
+  reason?: string;
+}
+
+export interface ModCompatResult {
+  mcVersion: string;
+  modLoader: string | null;
+  checkedAt: number;
+  complete: boolean;
+  summary: {
+    available: number;
+    unavailable: number;
+    unknown: number;
+    total: number;
+  };
+  mods: ModCompatMod[];
+}
+
+export interface ModCompatStarted {
+  jobId: string;
+}
+
+/** A mod compatibility check; the final fields appear once `state` is `done`. */
+export interface ModCompatJob extends Partial<ModCompatResult> {
+  jobId: string;
+  state: "running" | "done" | "failed";
+  mcVersion: string;
+  modLoader: string | null;
+  progress: { done: number; total: number };
+  partial: ModCompatMod[];
+  error?: string;
 }
 
 export interface ModApplyResult {
@@ -232,7 +335,7 @@ export interface WhitelistEntry {
   uuid: string;
 }
 
-// ── /info (wrapper >= 1.2.0 contract; this wrapper reports its own semver) ──
+// ── /info ──────────────────────────────────────────────────────────────────
 
 export interface ProcessUsage {
   pid: number;

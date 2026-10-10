@@ -10,6 +10,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "tsconfig*.json"
+      - "openapi.json"
       - ".github/workflows/tests.yml"
   pull_request:
     paths:
@@ -20,6 +21,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "tsconfig*.json"
+      - "openapi.json"
       - ".github/workflows/tests.yml"
 
 jobs:

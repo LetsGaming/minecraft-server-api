@@ -327,3 +327,19 @@ describe("parsePlayerList", () => {
     });
   });
 });
+
+// ── getFresh ───────────────────────────────────────────────────────────────
+
+describe("getFresh", () => {
+  it("bypasses a cached offline answer and sees the server that started since", async () => {
+    const monitor = createHealthMonitor(cfg({ useRcon: false }), null);
+    expect((await monitor.get()).state).toBe("offline");
+
+    processUsageMock.mockResolvedValue({ pid: 42, cpuPercent: 1, rssBytes: 1 });
+
+    expect((await monitor.get()).state).toBe("offline");
+    const fresh = await monitor.getFresh();
+    expect(fresh.state).toBe("online");
+    expect(fresh.ageMs).toBe(0);
+  });
+});

@@ -18,32 +18,54 @@ const AUTH_FAIL_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_FAIL_MAX = 20;
 
 /**
- * Above this many distinct IPs tracked at once, a periodic sweep drops
- * entries with no failures inside the window — otherwise a scanner hitting
- * many source addresses grows this map forever, never freeing entries that
- * age out on their own (isBlocked/recordFailure only prune the one IP they
- * touch).
+ * Above this many distinct IPs tracked at once, a sweep drops entries with
+ * no failures inside the window. Without it a scanner hitting many source
+ * addresses grows this map forever, since lookups only prune the one IP
+ * they touch.
  */
 const MAX_TRACKED_IPS = 10_000;
 
+/** Aged-out entries are also dropped on a schedule, not only when the map is large. */
+const SWEEP_INTERVAL_MS = 60_000;
+
 export class AuthFailTracker {
   private readonly failures = new Map<string, number[]>();
+  private lastSweep = Date.now();
 
-  private sweepIfLarge(now: number): void {
-    if (this.failures.size <= MAX_TRACKED_IPS) return;
+  /** Number of IPs currently holding a failure record. */
+  size(): number {
+    return this.failures.size;
+  }
+
+  private sweep(now: number): void {
+    this.lastSweep = now;
     for (const [ip, list] of this.failures) {
       if (list.every((t) => now - t >= AUTH_FAIL_WINDOW_MS)) this.failures.delete(ip);
     }
   }
 
-  /** True when this IP has exhausted its failure budget. */
+  private sweepIfDue(now: number): void {
+    if (
+      this.failures.size > MAX_TRACKED_IPS ||
+      now - this.lastSweep >= SWEEP_INTERVAL_MS
+    ) {
+      this.sweep(now);
+    }
+  }
+
+  /** True when this IP has exhausted its failure budget. Never creates an entry. */
   isBlocked(ip: string): boolean {
     const now = Date.now();
-    const list = (this.failures.get(ip) ?? []).filter(
-      (t) => now - t < AUTH_FAIL_WINDOW_MS,
-    );
-    this.failures.set(ip, list);
-    return list.length >= AUTH_FAIL_MAX;
+    this.sweepIfDue(now);
+    const list = this.failures.get(ip);
+    if (!list) return false;
+    const live = list.filter((t) => now - t < AUTH_FAIL_WINDOW_MS);
+    if (live.length === 0) {
+      this.failures.delete(ip);
+      return false;
+    }
+    this.failures.set(ip, live);
+    return live.length >= AUTH_FAIL_MAX;
   }
 
   recordFailure(ip: string): void {
@@ -51,7 +73,7 @@ export class AuthFailTracker {
     const list = this.failures.get(ip) ?? [];
     list.push(now);
     this.failures.set(ip, list);
-    this.sweepIfLarge(now);
+    this.sweepIfDue(now);
   }
 }
 
