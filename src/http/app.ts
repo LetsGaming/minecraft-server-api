@@ -148,9 +148,14 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
     },
   });
 
+  registerHealthRoute(app);
+  registerAuth(app, config, allowNoAuth);
+
   // A separate, tighter budget for anything that mutates state — see
   // writeRateLimit.ts for why this is hand-rolled rather than a second
-  // plugin registration.
+  // plugin registration. Registered after auth on purpose: a rejected
+  // request never reaches this hook, so unauthenticated POSTs cannot drain
+  // the budget of a legitimate client sharing the same source address.
   const writeLimiter = new WriteRateLimiter();
   app.addHook("onRequest", async (req, reply) => {
     if (req.method === "GET" || req.method === "HEAD") return;
@@ -163,8 +168,6 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
     }
   });
 
-  registerHealthRoute(app);
-  registerAuth(app, config, allowNoAuth);
   // Authenticated (registered after registerAuth), exempt from both rate
   // limiters above like /health — a scrape interval must never be able to
   // starve itself, or a legitimate client, out of its own diagnostic feed.
