@@ -246,11 +246,6 @@ export interface ModRemoveResult {
   ok: boolean;
   slug?: string;
   removedFile?: string | null;
-  /**
-   * Required dependencies of the removed mod that nothing else depends on.
-   * Reported, never auto-removed — the operator decides.
-   */
-  orphanedDependencies?: string[];
   error?: string;
   code?: string;
 }

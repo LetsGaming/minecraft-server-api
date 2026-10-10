@@ -3922,6 +3922,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "scriptTimeoutsMs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
           }
         },
         "required": [
@@ -3929,7 +3935,8 @@
           "manifest",
           "routes",
           "features",
-          "scriptActions"
+          "scriptActions",
+          "scriptTimeoutsMs"
         ],
         "additionalProperties": false
       },
@@ -4232,12 +4239,6 @@
           "removedFile": {
             "type": "string",
             "nullable": true
-          },
-          "orphanedDependencies": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           }
         },
         "required": [

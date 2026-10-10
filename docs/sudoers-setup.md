@@ -21,6 +21,18 @@ sudo -n -u minecraft bash /opt/minecraft/scripts/survival/backup/backup.sh [args
 sudo -n -u minecraft bash /opt/minecraft/scripts/survival/misc/status.sh [args…]
 ```
 
+Mod operations (the `/mods` routes) run the setup suite's Node scripts as
+the same user:
+
+```
+sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/add-mod.js [flags] --json -- <slug>
+sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/remove-mod.js --json -- <slug>
+sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/update-mod.js --json -- <slug>
+sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/update-mods.js [flags] --json --
+sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/check-updates.js [flags] --json --
+sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/toggle-mod.js --disable|--enable --json -- <slug>
+```
+
 Nothing else goes through sudo. Host metrics (`/info`) use plain `ps`
 and `df`, which need no privileges.
 
@@ -45,6 +57,28 @@ apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/
 apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/misc/status.sh *
 ```
 
+Mod operations need a separate `node` grant. Without it install, remove,
+update, enable and disable all fail with a generic `sudo` error:
+
+```
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/node /opt/minecraft/scripts/survival/update/add-mod.js *
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/node /opt/minecraft/scripts/survival/update/remove-mod.js *
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/node /opt/minecraft/scripts/survival/update/update-mod.js *
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/node /opt/minecraft/scripts/survival/update/update-mods.js *
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/node /opt/minecraft/scripts/survival/update/check-updates.js *
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/node /opt/minecraft/scripts/survival/update/toggle-mod.js *
+```
+
+### Absolute interpreter paths
+
+The wrapper starts `bash` and `node` by name unless told otherwise, and
+`sudo` resolves the name through its `secure_path`. A node installed per
+user (nvm, volta) is not on that path, and a name that resolves to a
+different binary than the one in your rule is a denied command. Set
+`MC_BASH_PATH` and `MC_NODE_PATH` in the wrapper's environment to the
+absolute paths (`command -v bash node`) and use those same paths in the
+rules above. A relative value stops startup.
+
 Adjust the script paths per instance (one block per `scriptsDir`), and
 check `which bash` / `which screen` on your distro — the paths in
 sudoers must be absolute and exact.
@@ -62,6 +96,7 @@ As the API user:
 ```bash
 sudo -n -u minecraft screen -list && echo OK
 sudo -n -u minecraft bash /opt/minecraft/scripts/survival/misc/status.sh && echo OK
+sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/check-updates.js --json -- && echo OK
 ```
 
 `sudo: a password is required` means the entry doesn't match — compare

@@ -188,7 +188,6 @@ const cases: Array<[string, S.JsonSchema, unknown]> = [
       ok: true,
       slug: "a",
       removedFile: null,
-      orphanedDependencies: ["b"],
     } satisfies W.ModRemoveResult,
   ],
   [

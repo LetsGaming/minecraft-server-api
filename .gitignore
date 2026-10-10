@@ -3,3 +3,4 @@ logs/
 variables.txt
 .env
 dist/
+.claude-flow/

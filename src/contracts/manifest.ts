@@ -16,7 +16,7 @@
  * router at boot and cannot disagree with what this process actually serves.
  * `openapi.json` is generated from that same census and drift-checked in CI.
  */
-import { SCRIPT_MAP } from "../instances/scripts.js";
+import { SCRIPT_MAP, SCRIPT_TIMEOUTS } from "../instances/scripts.js";
 import { WRAPPER_VERSION } from "./version.js";
 
 /**
@@ -204,6 +204,8 @@ export interface Manifest {
   routes: string[];
   features: Record<string, { version: number; summary: string }>;
   scriptActions: string[];
+  /** Milliseconds the wrapper lets each script action run before killing it. */
+  scriptTimeoutsMs: Record<string, number>;
 }
 
 /**
@@ -224,5 +226,8 @@ export function buildManifest(routes: readonly string[]): Manifest {
     routes: [...routes].sort(),
     features,
     scriptActions: Object.keys(SCRIPT_MAP).sort(),
+    scriptTimeoutsMs: Object.fromEntries(
+      Object.keys(SCRIPT_MAP).map((action) => [action, SCRIPT_TIMEOUTS[action] ?? 120_000]),
+    ),
   };
 }

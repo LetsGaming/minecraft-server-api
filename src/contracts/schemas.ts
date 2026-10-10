@@ -130,6 +130,7 @@ export const Manifest = named(
       routes: array(string),
       features: record(object({ version: integer, summary: string })),
       scriptActions: array(string),
+      scriptTimeoutsMs: record(integer),
     },
     { description: "What this wrapper serves; see src/contracts/manifest.ts." },
   ),
@@ -456,7 +457,6 @@ export const ModRemoveResult = named(
     {
       slug: string,
       removedFile: nullable(string),
-      orphanedDependencies: array(string),
     },
     "Result of remove-mod.js.",
   ),

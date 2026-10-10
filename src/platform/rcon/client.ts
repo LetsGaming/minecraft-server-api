@@ -17,6 +17,8 @@ import { recordRconReconnect } from "../metrics.js";
  */
 const RECONNECT_COOLDOWN_MS = 2_000;
 
+const AUTH_TIMEOUT_MS = 10_000;
+
 // ── RconClient ────────────────────────────────────────────────────────────
 
 interface Pending {
@@ -43,6 +45,7 @@ export class RconClient {
   private _buf = Buffer.alloc(0);
   private _authResolve: (() => void) | null = null;
   private _authReject: ((err: Error) => void) | null = null;
+  private _authTimeout: ReturnType<typeof setTimeout> | null = null;
   // F-004: waiter queue replaces the 50ms poll-loop for concurrent callers
   private _waiters: Waiter[] = [];
   /** Timestamp of the last successful command round-trip (isRunning fast path). */
@@ -56,7 +59,15 @@ export class RconClient {
     this.password = password;
   }
 
+  private _clearAuthTimeout(): void {
+    if (this._authTimeout) {
+      clearTimeout(this._authTimeout);
+      this._authTimeout = null;
+    }
+  }
+
   private _cleanup(): void {
+    this._clearAuthTimeout();
     this._auth = false;
     this._connecting = false;
     if (this._socket) {
@@ -114,11 +125,14 @@ export class RconClient {
       this._socket = socket;
       socket.setKeepAlive(true, 30_000);
 
-      const authTimeout = setTimeout(() => {
+      // Held in a field so _cleanup() disarms it; otherwise an error or close
+      // during auth leaves it pending, and it would later tear down whatever
+      // newer socket this client has by then.
+      this._authTimeout = setTimeout(() => {
         this._lastFailureTime = Date.now();
-        this._cleanup();
         reject(new Error("RCON auth timeout"));
-      }, 10_000);
+        this._cleanup();
+      }, AUTH_TIMEOUT_MS);
 
       socket.connect(this.port, this.host, () => {
         socket.write(encodePkt(1, 3, this.password));
@@ -132,7 +146,7 @@ export class RconClient {
           this._buf = this._buf.subarray(pkt.totalSize);
 
           if (!this._auth) {
-            clearTimeout(authTimeout);
+            this._clearAuthTimeout();
             if (pkt.id === -1) {
               this._connecting = false;
               this._lastFailureTime = Date.now();

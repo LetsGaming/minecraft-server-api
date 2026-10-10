@@ -8,7 +8,6 @@
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
-import readline from "readline";
 import type { ServerResponse } from "http";
 import type { InstanceConfig } from "../config/types.js";
 
@@ -30,6 +29,17 @@ function maxSseClients(): number {
   return Number.isInteger(parsed) && parsed > 0
     ? parsed
     : DEFAULT_MAX_SSE_CLIENTS;
+}
+
+async function readWindow(file: string, start: number, length: number): Promise<Buffer> {
+  const handle = await fsp.open(file, "r");
+  try {
+    const buf = Buffer.allocUnsafe(length);
+    const { bytesRead } = await handle.read(buf, 0, length, start);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
 }
 
 export interface LogStreamAPI {
@@ -119,15 +129,24 @@ export function initLogStream(
         }
 
         // A-05: clamp the read window
-        const readEnd = Math.min(stat.size - 1, state.lastSize + MAX_DELTA_BYTES - 1);
+        const windowBytes = Math.min(stat.size - state.lastSize, MAX_DELTA_BYTES);
+        const chunk = await readWindow(logFilePath, state.lastSize, windowBytes);
 
-        const stream = fs.createReadStream(logFilePath, {
-          start: state.lastSize,
-          end: readEnd,
-        });
-        const rl = readline.createInterface({ input: stream });
+        // Only complete lines are emitted. The window can end mid-line (the
+        // 1 MB clamp, or the server being between two writes of one line);
+        // the tail stays unread so the next pass starts at a line boundary.
+        // A window with no newline at all is emitted whole only when it is
+        // full, so a single pathological line cannot stall the tail forever.
+        let consumed = chunk.lastIndexOf(0x0a) + 1;
+        if (consumed === 0 && chunk.length === MAX_DELTA_BYTES) consumed = chunk.length;
+        if (consumed === 0) return;
 
-        for await (const line of rl) {
+        const text = chunk.subarray(0, consumed).toString("utf8");
+        const lines = text.split("\n");
+        if (text.endsWith("\n")) lines.pop();
+
+        for (const rawLine of lines) {
+          const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
           const payload = `data: ${JSON.stringify({ line, serverId: instanceId })}\n\n`;
           for (const res of [...clients]) {
             // SEC-06: a slow consumer must not backpressure the loop or
@@ -147,10 +166,10 @@ export function initLogStream(
           }
         }
 
-        state.lastSize = readEnd + 1;
-        // A-05's clamp can leave bytes behind. Ask for another pass rather
-        // than waiting out the poller for each 1 MB chunk.
-        if (readEnd + 1 < stat.size) state.pending = true;
+        state.lastSize += consumed;
+        // A-05's clamp can leave complete lines behind. Ask for another pass
+        // rather than waiting out the poller for each 1 MB chunk.
+        if (state.lastSize < stat.size) state.pending = true;
       } catch {
         /* swallow — the next cycle retries */
       } finally {
