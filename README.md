@@ -166,6 +166,8 @@ All routes except `GET /health` require the `x-api-key` header. Error bodies are
 | `POST` | `/instances/:id/mods/:slug/enable` | Re-enable a disabled mod |
 | `GET` | `/instances/:id/mods/updates` | Check installed mods for updates |
 | `POST` | `/instances/:id/mods/updates` | Apply every available mod update |
+| `POST` | `/instances/:id/mods/compat` | Start a background check of which installed mods have a release for `mcVersion` (202 with `jobId`; one job per version, cached 6 h, `refresh` skips the cache) |
+| `GET` | `/instances/:id/mods/compat/:jobId` | Progress, partial results and the final per-mod availability of that check (jobs are kept about 15 minutes) |
 | `GET` | `/instances/:id/configs` | Editable mod config files, addressed by opaque id |
 | `GET` | `/instances/:id/configs/:fileId` | One config file with its etag and snapshots |
 | `PUT` | `/instances/:id/configs/:fileId` | Write a config file (`If-Match` required; a snapshot is taken first) |
