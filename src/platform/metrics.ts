@@ -30,8 +30,6 @@ let peakInFlight = 0;
 let rateLimitRejections = 0;
 let rconReconnects = 0;
 
-const cacheStats = new Map<string, { hits: number; misses: number }>();
-
 const eventLoopMonitor = monitorEventLoopDelay({ resolution: 20 });
 eventLoopMonitor.enable();
 
@@ -88,18 +86,6 @@ export function recordRconReconnect(): void {
   rconReconnects++;
 }
 
-export function recordCacheHit(name: string): void {
-  const s = cacheStats.get(name) ?? { hits: 0, misses: 0 };
-  s.hits++;
-  cacheStats.set(name, s);
-}
-
-export function recordCacheMiss(name: string): void {
-  const s = cacheStats.get(name) ?? { hits: 0, misses: 0 };
-  s.misses++;
-  cacheStats.set(name, s);
-}
-
 export interface MetricsSnapshot {
   uptimeSeconds: number;
   memory: NodeJS.MemoryUsage;
@@ -128,12 +114,6 @@ export function getSnapshot(): MetricsSnapshot {
     };
   }
 
-  const cacheSnapshot: MetricsSnapshot["cache"] = {};
-  for (const [name, s] of cacheStats) {
-    const total = s.hits + s.misses;
-    cacheSnapshot[name] = { ...s, hitRate: total > 0 ? s.hits / total : 0 };
-  }
-
   const hist = eventLoopMonitor;
   return {
     uptimeSeconds: Math.round(process.uptime()),
@@ -147,7 +127,7 @@ export function getSnapshot(): MetricsSnapshot {
       p95: hist.percentile(95) / 1e6,
       max: hist.max / 1e6,
     },
-    cache: cacheSnapshot,
+    cache: {},
     routes: routeSnapshot,
   };
 }
@@ -155,7 +135,6 @@ export function getSnapshot(): MetricsSnapshot {
 /** Test-only: drop all accumulated counters. */
 export function resetMetricsForTesting(): void {
   routes.clear();
-  cacheStats.clear();
   inFlight = 0;
   peakInFlight = 0;
   rateLimitRejections = 0;
