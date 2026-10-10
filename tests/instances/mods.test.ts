@@ -44,6 +44,18 @@ describe("MOD_VALIDATION", () => {
     }
   });
 
+  it("rejects anything that could read as an option or a dot path", () => {
+    for (const s of ["--json", "-h", "--help", "-", "..", ".hidden", "_x"]) {
+      expect(SLUG_RE.test(s)).toBe(false);
+    }
+  });
+
+  it("accepts mixed-case project ids and the 96 character maximum only", () => {
+    expect(SLUG_RE.test("P7dR8mSH")).toBe(true);
+    expect(SLUG_RE.test("a".repeat(96))).toBe(true);
+    expect(SLUG_RE.test("a".repeat(97))).toBe(false);
+  });
+
   it("validates the version, loader and version id shapes", () => {
     expect(MC_VERSION_RE.test("1.21.4")).toBe(true);
     expect(MC_VERSION_RE.test("1.21 4")).toBe(false);
@@ -64,11 +76,14 @@ describe("runModScript via the public operations", () => {
     expect(target).toBe(fx.cfg);
     expect(command[0]).toBe("node");
     expect(command[1]).toBe(path.join(fx.cfg.scriptsDir, "update/add-mod.js"));
-    expect(command).toContain("sodium");
-    expect(command).toContain("--mcVersion=1.21.4");
-    expect(command).toContain("--modLoader=fabric");
-    expect(command).toContain("--versionId=AbCd");
-    expect(command.at(-1)).toBe("--json");
+    expect(command.slice(2)).toEqual([
+      "--mcVersion=1.21.4",
+      "--modLoader=fabric",
+      "--versionId=AbCd",
+      "--json",
+      "--",
+      "sodium",
+    ]);
     expect(options).toEqual({ timeoutMs: 120_000, label: "Add mod" });
   });
 
@@ -113,8 +128,8 @@ describe("runModScript via the public operations", () => {
     const mods = createMods(fx.cfg);
     await mods.disableMod("sodium");
     await mods.enableMod("sodium");
-    expect(runMock.mock.calls[0]![1]).toContain("--disable");
-    expect(runMock.mock.calls[1]![1]).toContain("--enable");
+    expect(runMock.mock.calls[0]![1].slice(2)).toEqual(["--disable", "--json", "--", "sodium"]);
+    expect(runMock.mock.calls[1]![1].slice(2)).toEqual(["--enable", "--json", "--", "sodium"]);
   });
 
   it("uses a ten minute ceiling for apply and 15 s for toggle", async () => {
