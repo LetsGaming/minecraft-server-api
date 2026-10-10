@@ -15,7 +15,7 @@
 import { createHash, randomUUID } from "crypto";
 
 import { mapLimit } from "../platform/concurrency.js";
-import { log, logSafe } from "../platform/logger.js";
+import { log, logFields } from "../platform/logger.js";
 import type {
   ModCompatAvailability,
   ModCompatJob,
@@ -146,12 +146,12 @@ export function classifyResult(
     if (status !== "invalid_entry" && status !== "error") {
       log.warn(
         "mods",
-        `compat: unrecognised check status slug=${logSafe(slug, 100)} status=${logSafe(status, 50)}`,
+        `compat: unrecognised check status ${logFields({ slug, status })}`,
       );
     } else if (status === "error") {
       log.warn(
         "mods",
-        `compat: check failed slug=${logSafe(slug, 100)} detail=${logSafe(entry["error"])}`,
+        `compat: check failed ${logFields({ slug, detail: entry["error"] })}`,
       );
     }
   }
@@ -257,7 +257,7 @@ export function createModCompat(deps: ModCompatDeps) {
         const detail = err instanceof Error ? err.message : String(err);
         log.error(
           "mods",
-          `compat: check script failed slug=${logSafe(mod.slug, 100)} detail=${logSafe(detail)}`,
+          `compat: check script failed ${logFields({ slug: mod.slug, detail })}`,
         );
         const reason = /timed? ?out/i.test(detail) ? "timeout" : "script failed";
         firstError ||= reason;
@@ -349,7 +349,7 @@ export function createModCompat(deps: ModCompatDeps) {
       void run(job, installed).catch((err: unknown) => {
         log.error(
           "mods",
-          `compat: job failed job=${job.id} mcVersion=${logSafe(job.mcVersion, 30)} detail=${logSafe(err instanceof Error ? err.message : err)}`,
+          `compat: job failed ${logFields({ job: job.id, mcVersion: job.mcVersion, detail: err instanceof Error ? err.message : err })}`,
         );
         job.state = "failed";
         job.error = "check failed";
