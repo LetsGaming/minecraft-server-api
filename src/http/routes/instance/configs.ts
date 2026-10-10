@@ -1,14 +1,14 @@
 /**
  * Mod config files: index, read, write, snapshots, revert.
  *
- * Every route addresses a file by the opaque id from the index — no path, no
+ * Every route addresses a file by the opaque id from the index, no path, no
  * filename, nothing a client could shape into one. See instances/configFiles.ts
  * for why that is structural rather than a validation rule.
  *
  * The wrapper does not know what a TOML file means. It serves bytes and takes
  * bytes; parsing, schema derivation and the splicing writer all live upstream
  * in the bot's `configfmt`. That split is deliberate: a wrapper release is a
- * deploy on every Minecraft host, so format quirks — and there are many — must
+ * deploy on every Minecraft host, so format quirks, and there are many, must
  * be fixable without touching game servers.
  */
 import type { FastifyInstance } from "fastify";

@@ -9,7 +9,7 @@
  *
  * That matters more here than for backups. Backups live in one directory with
  * one extension; mod configs are spread across four roots, and the naive design
- * — take a relative path, `resolve` it, check `startsWith` — is a guard that
+ *, take a relative path, `resolve` it, check `startsWith`, is a guard that
  * has to be written correctly every time and still cannot see a symlink planted
  * inside `config/`. Both walls are here: the id must resolve against a listing
  * this module just built, and the realpath must still be inside a root.
@@ -419,7 +419,7 @@ export function createConfigFiles(cfg: InstanceConfig) {
     id: string,
     stamp: string,
   ): Promise<{ ok: true; etag: string } | { ok: false; reason: string }> {
-    // The stamp comes from a client, so it is validated rather than trusted —
+    // The stamp comes from a client, so it is validated rather than trusted.
     // it is the one string here that is not an opaque handle.
     if (!/^[\dTZ-]{1,40}$/.test(stamp)) return { ok: false, reason: "bad-snapshot" };
     const found = await resolve(id);
