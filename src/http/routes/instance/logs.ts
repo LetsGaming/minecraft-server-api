@@ -10,6 +10,7 @@ import type { FastifyInstance } from "fastify";
 import { internalError } from "../../errors.js";
 import { sanitizeLines } from "../../validation.js";
 import type { LogStreamAPI } from "../../../platform/logStream.js";
+import { endRequest } from "../../../platform/metrics.js";
 import {
   INSTANCE_PREFIX as P,
   type InstanceParams,
@@ -53,6 +54,11 @@ export function registerLogRoutes(
 
     // SSE: take over the raw socket; Fastify must not touch the reply after this.
     reply.hijack();
+    // Fastify never runs onResponse for a hijacked reply, so the in-flight
+    // slot taken by the onRequest hook would be held for the life of the
+    // stream (and leaked for good on a dropped socket). A stream is a
+    // subscription, not work in progress: release the slot right away.
+    endRequest();
     const res = reply.raw;
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
