@@ -39,7 +39,7 @@ components:
         The structured result of a mod add/remove/apply script. `ok` is the
         only guaranteed field; the rest depend on the operation. A handled
         failure is { ok: false, error, code }; a success carries the operation's
-        own fields (action, dependencies, updated, orphanedDependencies, ...).
+        own fields (action, dependencies, updated, ...).
       required: [ok]
       properties:
         ok: { type: boolean }
