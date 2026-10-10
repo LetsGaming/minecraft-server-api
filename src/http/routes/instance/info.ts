@@ -4,6 +4,11 @@
  */
 import type { FastifyInstance } from "fastify";
 
+import { InstanceInfo, Capabilities } from "../../../contracts/schemas.js";
+import {
+  errors,
+  instanceParams,
+} from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
 import { getHostInfo } from "../../../platform/host/index.js";
 import { WRAPPER_VERSION } from "../../../contracts/version.js";
@@ -21,19 +26,40 @@ export function registerInfoRoutes(
   // feature (bot: serverAccess.getRemoteInfo, MIN_WRAPPER_VERSION).
   // `version` lets the bot verify compatibility at startup; `host` feeds
   // the status view and the disk-space alerts for remote instances.
-  app.get<{ Params: InstanceParams }>(`${P}/info`, async (req, reply) => {
-    const entry = resolve(req.params.id, reply);
-    if (!entry) return;
-    try {
-      return { version: WRAPPER_VERSION, host: await getHostInfo(entry.cfg) };
-    } catch (err) {
-      return internalError(reply, `info ${req.params.id}`, err);
-    }
-  });
+  app.get<{ Params: InstanceParams }>(
+    `${P}/info`,
+    {
+      schema: {
+        summary: "Wrapper version and host metrics",
+        description:
+          "The version handshake plus whole-machine CPU and memory, the server process, and per-directory disk usage.",
+        tags: ["server"],
+        params: instanceParams(),
+        response: { 200: InstanceInfo, ...errors(404, 500) },
+      },
+    },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      try {
+        return { version: WRAPPER_VERSION, host: await getHostInfo(entry.cfg) };
+      } catch (err) {
+        return internalError(reply, `info ${req.params.id}`, err);
+      }
+    },
+  );
 
   // M-13: which setup-suite artifacts exist for this instance.
   app.get<{ Params: InstanceParams }>(
     `${P}/capabilities`,
+    {
+      schema: {
+        summary: "Which setup-suite artifacts exist for the instance",
+        tags: ["server"],
+        params: instanceParams(),
+        response: { 200: Capabilities, ...errors(404, 500) },
+      },
+    },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;

@@ -4,6 +4,16 @@
  */
 import type { FastifyInstance } from "fastify";
 
+import {
+  StatsUuids,
+  StatsBulk,
+  StatsOne,
+  StatsDeleted,
+} from "../../../contracts/schemas.js";
+import {
+  errors,
+  instanceParams,
+} from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
 import { UUID_RE } from "../../validation.js";
 import {
@@ -16,30 +26,60 @@ export function registerStatsRoutes(
   app: FastifyInstance,
   resolve: ResolveInstance,
 ): void {
-  app.get<{ Params: InstanceParams }>(`${P}/stats`, async (req, reply) => {
-    const entry = resolve(req.params.id, reply);
-    if (!entry) return;
-    try {
-      return { uuids: await entry.listStatsUuids() };
-    } catch (err) {
-      return internalError(reply, `stats ${req.params.id}`, err);
-    }
-  });
+  app.get<{ Params: InstanceParams }>(
+    `${P}/stats`,
+    {
+      schema: {
+        summary: "Uuids that have a stats file",
+        tags: ["stats"],
+        params: instanceParams(),
+        response: { 200: StatsUuids, ...errors(404, 500) },
+      },
+    },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      try {
+        return { uuids: await entry.listStatsUuids() };
+      } catch (err) {
+        return internalError(reply, `stats ${req.params.id}`, err);
+      }
+    },
+  );
 
   // Every player's stats in one response, bounded server-side, so a
   // leaderboard build costs one request instead of one per lifetime player.
-  app.get<{ Params: InstanceParams }>(`${P}/stats/bulk`, async (req, reply) => {
-    const entry = resolve(req.params.id, reply);
-    if (!entry) return;
-    try {
-      return { stats: await entry.getAllStats() };
-    } catch (err) {
-      return internalError(reply, `stats/bulk ${req.params.id}`, err);
-    }
-  });
+  app.get<{ Params: InstanceParams }>(
+    `${P}/stats/bulk`,
+    {
+      schema: {
+        summary: "Every player's stats in one response",
+        tags: ["stats"],
+        params: instanceParams(),
+        response: { 200: StatsBulk, ...errors(404, 500) },
+      },
+    },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      try {
+        return { stats: await entry.getAllStats() };
+      } catch (err) {
+        return internalError(reply, `stats/bulk ${req.params.id}`, err);
+      }
+    },
+  );
 
   app.get<{ Params: InstanceParams & { uuid: string } }>(
     `${P}/stats/:uuid`,
+    {
+      schema: {
+        summary: "One player's stats file",
+        tags: ["stats"],
+        params: instanceParams({ uuid: "Player uuid, with dashes." }),
+        response: { 200: StatsOne, ...errors(400, 404, 500) },
+      },
+    },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
@@ -62,6 +102,15 @@ export function registerStatsRoutes(
   // `/server prune-stats`.
   app.delete<{ Params: InstanceParams & { uuid: string } }>(
     `${P}/stats/:uuid`,
+    {
+      schema: {
+        summary: "Delete one player's stats file",
+        description: "`deleted` is false when there was no such file.",
+        tags: ["stats"],
+        params: instanceParams({ uuid: "Player uuid, with dashes." }),
+        response: { 200: StatsDeleted, ...errors(400, 404, 500) },
+      },
+    },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;

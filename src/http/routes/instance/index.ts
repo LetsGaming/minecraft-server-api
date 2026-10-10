@@ -16,6 +16,7 @@ import { registerPlayerRoutes } from "./players.js";
 import { registerRuntimeRoutes } from "./runtime.js";
 import { registerStatsRoutes } from "./stats.js";
 import { registerWorldRoutes } from "./world.js";
+import { InstanceList } from "../../../contracts/schemas.js";
 import type { LogStreamAPI } from "../../../platform/logStream.js";
 import type { InstanceEntry, ResolveInstance } from "./shared.js";
 
@@ -26,9 +27,19 @@ export function registerInstanceRoutes(
 ): void {
   // Configured instance IDs so clients can discover what is deployed
   // without out-of-band configuration.
-  app.get("/instances", async () => ({
-    instances: [...opsRegistry.keys()].map((id) => ({ id })),
-  }));
+  app.get(
+    "/instances",
+    {
+      schema: {
+        summary: "Configured instance ids",
+        tags: ["meta"],
+        response: { 200: InstanceList },
+      },
+    },
+    async () => ({
+      instances: [...opsRegistry.keys()].map((id) => ({ id })),
+    }),
+  );
 
   const resolve: ResolveInstance = (id, reply) => {
     const entry = opsRegistry.get(id);

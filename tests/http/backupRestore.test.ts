@@ -20,10 +20,9 @@ function build(opts: {
   found?: boolean;
 }) {
   const restore = vi.fn(async (_abs: string) => ({
-    success: true,
-    exitCode: 0,
-    stdout: "done",
+    output: "done",
     stderr: "",
+    exitCode: 0,
   }));
   const entry = {
     getHealth: vi.fn(async () => ({ state: opts.cached ?? "offline" })),
