@@ -14,6 +14,8 @@ unchanged.
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-10
+
 Several changes below are marked **BREAKING**: they need a matching change in the bot or in the wrapper's configuration. Update the wrapper first, then the bot.
 
 ### Added
