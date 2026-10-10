@@ -32,6 +32,7 @@ unchanged.
 
 ### Changed
 
+- Removed the unused cache hit and miss recorders; `GET /metrics` reports an empty `cache` object as before for the caches that never recorded (`platform/metrics.ts`).
 - **`POST /instances/:id/command` reports how the command travelled** (`rcon-command` v2). The reply is now `{ result, via: "rcon"|"screen", sent, rconError? }`; `result` is unchanged for older bots. `rconError` names why RCON was skipped when the screen fallback carried the command. A command that neither RCON nor `screen` could deliver now answers `502 { error }` instead of `200 { result: null }`. Touched: `src/instances/commands.ts`, `src/http/routes/instance/control.ts`, `src/contracts/{schemas,wire,manifest,routeSchema}.ts`, `openapi.json`.
 - Replies are serialized through their response schema, so a field that is not part of the contract no longer reaches a client. The restore test stub returned a shape the real route never produced; it now matches `ScriptResult`.
 - The README route table lists the mod, config and delete routes it was missing, and no longer names wrapper versions for features. Read the features in `GET /manifest` instead.
@@ -52,6 +53,10 @@ unchanged.
 ### Removed
 
 - `openapi.yaml`. It was hand-written, had drifted (`info.version` read 3.0.0), and is replaced by the generated `openapi.json`. A test fails when the committed file is not what the router generates.
+
+### Security
+
+- Updated dependencies to clear `npm audit` findings: `fastify` 5.12.5 (schema validation bypass, `X-Forwarded-*` spoofing under `trustProxy` hop counts, HTTP/2 trailer DoS), `fast-uri`, `js-yaml`, `nanoid`, `source-map-js`. `npm audit` now reports no vulnerabilities.
 
 ### Fixed
 
