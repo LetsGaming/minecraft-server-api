@@ -98,6 +98,23 @@ export const ErrorBody = named(
   ),
 );
 
+export const BusyBody = named(
+  "OperationBusy",
+  object(
+    {
+      error: string,
+      busy: object(
+        {
+          kind: { ...string, description: "What holds the instance: stop, backup, restore, mods, upgrade, ..." },
+          jobId: { ...string, description: "Set when the holder is a job that can be polled." },
+        },
+        { required: ["kind"] },
+      ),
+    },
+    { description: "Another operation holds the instance. Try again when it finishes." },
+  ),
+);
+
 export const NotOfflineBody = named(
   "RestoreRefused",
   object(
@@ -291,6 +308,7 @@ export const Capabilities = named(
     restore: boolean,
     modManifest: boolean,
     variablesFile: boolean,
+    upgrade: { ...boolean, description: "update/upgrade.sh exists, so the version upgrade job can run." },
   }),
 );
 
@@ -601,6 +619,85 @@ export const ModCompatRequest = named(
     },
     { required: ["mcVersion"] },
   ),
+);
+
+// ── Operations ───────────────────────────────────────────────────────────
+
+export const UpgradeRequest = named(
+  "UpgradeRequest",
+  object(
+    {
+      mcVersion: { ...string, description: "The Minecraft version to move to." },
+      expectUnavailable: {
+        ...array(string),
+        description:
+          "The mods a compatibility check reported as unavailable. The job refuses to start if the installed set no longer gives the same list.",
+      },
+      countdownSeconds: { ...integer, description: "Warning before the stop; default 30, at most 600." },
+    },
+    { required: ["mcVersion"] },
+  ),
+);
+
+export const UpgradeStarted = named(
+  "UpgradeStarted",
+  object({ jobId: { ...string, description: "The job to poll." } }),
+);
+
+const UpgradeEvent = named(
+  "UpgradeEvent",
+  object({
+    seq: integer,
+    ts: { ...integer, description: "Epoch seconds." },
+    phase: string,
+    status: { type: "string", enum: ["running", "done", "error", "info"] },
+    msg: string,
+  }),
+);
+
+const UpgradeResult = named(
+  "UpgradeResult",
+  object(
+    {
+      ok: boolean,
+      branch: { type: "string", enum: ["clean", "mods_disabled"], description: "How a successful upgrade got there." },
+      target: string,
+      archive: { ...string, description: "Name of the backup this job took." },
+      disabled: { ...array(string), description: "Mods moved to mods/disabled/ to get the server up." },
+      keptOnOldBuild: { ...array(string), description: "Mods running on a build made for an older version." },
+      rolledBack: boolean,
+      previousVersionRunning: boolean,
+      reason: { ...string, description: "Why it failed: apply_failed, prune_failed, crash_loop, timeout, backup_failed, ..." },
+    },
+    { required: ["ok"], open: true },
+  ),
+);
+
+export const UpgradeJob = named(
+  "UpgradeJob",
+  object(
+    {
+      jobId: string,
+      state: { type: "string", enum: ["running", "done", "failed"] },
+      mcVersion: string,
+      events: { ...array(UpgradeEvent), description: "Progress lines after `since`." },
+      next: { ...integer, description: "Pass as `since` to get only newer events." },
+      result: UpgradeResult,
+      error: { ...string, description: "busy, failed or interrupted when there is no result." },
+    },
+    { required: ["jobId", "state", "mcVersion", "events", "next"] },
+  ),
+);
+
+export const LifecycleEvents = named(
+  "LifecycleEvents",
+  object({
+    events: {
+      ...array(freeForm("One event: ts, type (jvm_start, jvm_exit, restart_scheduled, crash_loop_gave_up) and its fields.")),
+    },
+    next: { ...integer, description: "Byte offset to pass as `since`." },
+    reset: { ...boolean, description: "The file was rotated; this is a read from its start." },
+  }),
 );
 
 // ── Control ──────────────────────────────────────────────────────────────

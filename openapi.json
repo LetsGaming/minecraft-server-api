@@ -1162,6 +1162,98 @@
         }
       }
     },
+    "/instances/{id}/events": {
+      "get": {
+        "operationId": "getInstancesByIdEvents",
+        "summary": "Server lifecycle events",
+        "description": "What start.sh recorded: JVM started and exited, restart scheduled, crash loop gave up. Read with a byte-offset cursor: pass the previous `next` as `since`. `reset` means the file was rotated and this read starts from its beginning.",
+        "tags": [
+          "operations"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Byte offset from the previous reply; default 0."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleEvents"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/instances/{id}/health": {
       "get": {
         "operationId": "getInstancesByIdHealth",
@@ -2589,6 +2681,292 @@
         }
       }
     },
+    "/instances/{id}/operations/upgrade": {
+      "post": {
+        "operationId": "postInstancesByIdOperationsUpgrade",
+        "summary": "Start a Minecraft version upgrade",
+        "description": "Runs the suite's upgrade job in the background: players are warned, the server is stopped and backed up, the new version and mods are installed, and the server is started and watched. If it does not come up, the mods without a build are disabled and it starts again; if that fails too, this job's own backup is restored. Refused with 423 while anything else holds the instance.",
+        "tags": [
+          "operations"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeStarted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Locked: another operation holds the instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationBusy"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/operations/upgrade/{jobId}": {
+      "get": {
+        "operationId": "getInstancesByIdOperationsUpgradeByJobId",
+        "summary": "Progress and result of an upgrade",
+        "description": "Finished jobs are kept for a few hours (the last five); after that the id is unknown (404).",
+        "tags": [
+          "operations"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Job id from the start request."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Progress sequence number; only newer lines are returned."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/operations/upgrade/current": {
+      "get": {
+        "operationId": "getInstancesByIdOperationsUpgradeCurrent",
+        "summary": "The running or most recent upgrade",
+        "description": "The job this wrapper is running, else the latest one it knows, else what the script left behind (so a wrapper restart does not lose the outcome). 404 when there has been none.",
+        "tags": [
+          "operations"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Progress sequence number; only newer lines are returned."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/instances/{id}/running": {
       "get": {
         "operationId": "getInstancesByIdRunning",
@@ -3653,6 +4031,10 @@
           },
           "variablesFile": {
             "type": "boolean"
+          },
+          "upgrade": {
+            "type": "boolean",
+            "description": "update/upgrade.sh exists, so the version upgrade job can run."
           }
         },
         "required": [
@@ -3660,7 +4042,8 @@
           "backups",
           "restore",
           "modManifest",
-          "variablesFile"
+          "variablesFile",
+          "upgrade"
         ],
         "additionalProperties": false
       },
@@ -4113,6 +4496,33 @@
         },
         "required": [
           "instances"
+        ],
+        "additionalProperties": false
+      },
+      "LifecycleEvents": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One event: ts, type (jvm_start, jvm_exit, restart_scheduled, crash_loop_gave_up) and its fields.",
+              "additionalProperties": true
+            }
+          },
+          "next": {
+            "type": "integer",
+            "description": "Byte offset to pass as `since`."
+          },
+          "reset": {
+            "type": "boolean",
+            "description": "The file was rotated; this is a read from its start."
+          }
+        },
+        "required": [
+          "events",
+          "next",
+          "reset"
         ],
         "additionalProperties": false
       },
@@ -4757,6 +5167,37 @@
         },
         "additionalProperties": false
       },
+      "OperationBusy": {
+        "type": "object",
+        "description": "Another operation holds the instance. Try again when it finishes.",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "busy": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "What holds the instance: stop, backup, restore, mods, upgrade, ..."
+              },
+              "jobId": {
+                "type": "string",
+                "description": "Set when the holder is a job that can be polled."
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error",
+          "busy"
+        ],
+        "additionalProperties": false
+      },
       "PlayerList": {
         "type": "object",
         "description": "`playerCount` and `maxPlayers` are strings; maxPlayers is \"?\" when unknown.",
@@ -4904,6 +5345,174 @@
           "type",
           "tps1m",
           "raw"
+        ],
+        "additionalProperties": false
+      },
+      "UpgradeEvent": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "ts": {
+            "type": "integer",
+            "description": "Epoch seconds."
+          },
+          "phase": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "done",
+              "error",
+              "info"
+            ]
+          },
+          "msg": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ts",
+          "phase",
+          "status",
+          "msg"
+        ],
+        "additionalProperties": false
+      },
+      "UpgradeJob": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "done",
+              "failed"
+            ]
+          },
+          "mcVersion": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpgradeEvent"
+            },
+            "description": "Progress lines after `since`."
+          },
+          "next": {
+            "type": "integer",
+            "description": "Pass as `since` to get only newer events."
+          },
+          "result": {
+            "$ref": "#/components/schemas/UpgradeResult"
+          },
+          "error": {
+            "type": "string",
+            "description": "busy, failed or interrupted when there is no result."
+          }
+        },
+        "required": [
+          "jobId",
+          "state",
+          "mcVersion",
+          "events",
+          "next"
+        ],
+        "additionalProperties": false
+      },
+      "UpgradeRequest": {
+        "type": "object",
+        "properties": {
+          "mcVersion": {
+            "type": "string",
+            "description": "The Minecraft version to move to."
+          },
+          "expectUnavailable": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The mods a compatibility check reported as unavailable. The job refuses to start if the installed set no longer gives the same list."
+          },
+          "countdownSeconds": {
+            "type": "integer",
+            "description": "Warning before the stop; default 30, at most 600."
+          }
+        },
+        "required": [
+          "mcVersion"
+        ],
+        "additionalProperties": false
+      },
+      "UpgradeResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "branch": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "mods_disabled"
+            ],
+            "description": "How a successful upgrade got there."
+          },
+          "target": {
+            "type": "string"
+          },
+          "archive": {
+            "type": "string",
+            "description": "Name of the backup this job took."
+          },
+          "disabled": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Mods moved to mods/disabled/ to get the server up."
+          },
+          "keptOnOldBuild": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Mods running on a build made for an older version."
+          },
+          "rolledBack": {
+            "type": "boolean"
+          },
+          "previousVersionRunning": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it failed: apply_failed, prune_failed, crash_loop, timeout, backup_failed, ..."
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": true
+      },
+      "UpgradeStarted": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "description": "The job to poll."
+          }
+        },
+        "required": [
+          "jobId"
         ],
         "additionalProperties": false
       },

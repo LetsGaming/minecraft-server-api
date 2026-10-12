@@ -14,6 +14,16 @@ unchanged.
 
 ## [Unreleased]
 
+### Added
+
+- **Version upgrade job.** `POST /instances/:id/operations/upgrade` starts the suite's `update/upgrade.sh` in the background (202 + job id); `GET .../operations/upgrade/:jobId?since=<seq>` and `.../current` report phase progress and the result. After a wrapper restart `current` still reports the outcome from the script's status file, or "interrupted". New feature `operations`; `Capabilities.upgrade` says whether the script exists.
+- **Lifecycle events.** `GET /instances/:id/events?since=<offset>` reads `logs/lifecycle.ndjson` (JVM start and exit, restart scheduled, crash loop gave up) with a byte-offset cursor. New feature `lifecycle-events`.
+- `platform/spawn.ts` `spawnJobAsInstanceUser`: streams a job's stdout line by line, in its own process group so a wrapper restart does not kill it.
+
+### Changed
+
+- **One slot per instance.** Stop, restart, rollback, backup, restore, mod writes and the upgrade now exclude each other: while one runs, another answers **423** `{ error, busy: { kind, jobId? } }` instead of racing it. Mod writes still queue behind each other. A status read is never blocked. New `423` response in the OpenAPI document.
+
 ## [4.0.0] - 2026-10-10
 
 Several changes below are marked **BREAKING**: they need a matching change in the bot or in the wrapper's configuration. Update the wrapper first, then the bot.

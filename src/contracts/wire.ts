@@ -176,6 +176,8 @@ export interface Capabilities {
   restore: boolean;
   modManifest: boolean;
   variablesFile: boolean;
+  /** update/upgrade.sh exists, so the version upgrade job can run. */
+  upgrade: boolean;
 }
 
 /** One archive in the backups directory. */
@@ -314,6 +316,45 @@ export interface ModCompatJob extends Partial<ModCompatResult> {
   progress: { done: number; total: number };
   partial: ModCompatMod[];
   error?: string;
+}
+
+export interface UpgradeEvent {
+  seq: number;
+  /** Epoch seconds. */
+  ts: number;
+  phase: string;
+  status: string;
+  msg: string;
+}
+
+export interface UpgradeResult {
+  ok: boolean;
+  branch?: "clean" | "mods_disabled";
+  target?: string;
+  archive?: string;
+  disabled?: string[];
+  keptOnOldBuild?: string[];
+  rolledBack?: boolean;
+  previousVersionRunning?: boolean;
+  reason?: string;
+  [key: string]: unknown;
+}
+
+/** A version upgrade job; `events` holds only what came after `since`. */
+export interface UpgradeJob {
+  jobId: string;
+  state: "running" | "done" | "failed";
+  mcVersion: string;
+  events: UpgradeEvent[];
+  next: number;
+  result?: UpgradeResult;
+  error?: string;
+}
+
+export interface LifecycleEvents {
+  events: Array<Record<string, unknown>>;
+  next: number;
+  reset: boolean;
 }
 
 export interface ModApplyResult {

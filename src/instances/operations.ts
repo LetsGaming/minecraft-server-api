@@ -28,6 +28,9 @@ import { createScripts } from "./scripts.js";
 import { createStats } from "./stats.js";
 import { createTps } from "./tps.js";
 import { createWorld } from "./world.js";
+import { createOperationSlot } from "./operationSlot.js";
+import { createUpgrades } from "./upgrades.js";
+import { createLifecycleEvents } from "./lifecycleEvents.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { InstanceHealth } from "../contracts/wire.js";
 
@@ -48,12 +51,17 @@ export function createOperations(cfg: InstanceConfig) {
   const tps = createTps(rcon);
   const stats = createStats(cfg, world);
   const logs = createLogs(cfg);
-  const mods = createMods(cfg);
+  // One slot per instance for everything that rewrites files or changes
+  // whether the server runs; see operationSlot.ts.
+  const slot = createOperationSlot();
+  const mods = createMods(cfg, slot);
   const backups = createBackups(cfg);
   const backupFiles = createBackupFiles(cfg);
-  const restore = createRestore(cfg);
+  const restore = createRestore(cfg, slot);
   const configFiles = createConfigFiles(cfg);
-  const scripts = createScripts(cfg);
+  const scripts = createScripts(cfg, slot);
+  const upgrades = createUpgrades(cfg, slot);
+  const lifecycle = createLifecycleEvents(cfg);
 
   /** Full three-state health — see health.ts for why one boolean was not enough. */
   async function getHealth(): Promise<InstanceHealth> {
@@ -95,6 +103,8 @@ export function createOperations(cfg: InstanceConfig) {
     listConfigSnapshots: configFiles.listSnapshots,
     revertConfigFile: configFiles.revert,
     ...scripts,
+    ...upgrades,
+    ...lifecycle,
     getLevelName: world.getLevelName,
     getHealth,
     getFreshHealth,

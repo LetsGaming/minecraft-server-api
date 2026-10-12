@@ -8,7 +8,7 @@
  * therefore travels in `requestBody`, which Fastify ignores and openapi.ts
  * reads.
  */
-import { ErrorBody, NotOfflineBody, type JsonSchema } from "./schemas.js";
+import { BusyBody, ErrorBody, NotOfflineBody, type JsonSchema } from "./schemas.js";
 
 export interface RequestBodyDoc {
   description?: string;
@@ -68,6 +68,7 @@ const ERROR_DESCRIPTIONS: Record<number, string> = {
   412: "Precondition failed",
   413: "Payload too large",
   416: "Range not satisfiable",
+  423: "Locked: another operation holds the instance",
   428: "Precondition required",
   429: "Too many requests",
   500: "Internal server error",
@@ -79,7 +80,7 @@ const ERROR_DESCRIPTIONS: Record<number, string> = {
 export function errors(...codes: number[]): Record<number, JsonSchema> {
   const out: Record<number, JsonSchema> = {};
   for (const code of codes) {
-    out[code] = code === 409 ? NotOfflineBody : ErrorBody;
+    out[code] = code === 409 ? NotOfflineBody : code === 423 ? BusyBody : ErrorBody;
   }
   return out;
 }

@@ -222,3 +222,95 @@ export function runAsInstanceUser(
     });
   });
 }
+
+export interface JobSpawnOptions {
+  timeoutMs: number;
+  label: string;
+  /** Called for every complete stdout line, as it arrives. */
+  onLine: (line: string) => void;
+}
+
+export interface JobSpawnHandle {
+  /** Resolves when the process ends; rejects on spawn failure or timeout. */
+  done: Promise<{ exitCode: number | null; stderr: string }>;
+}
+
+/**
+ * Like runAsInstanceUser, but for a long job whose progress matters while it
+ * runs: stdout is handed to `onLine` line by line instead of being collected,
+ * so nothing accumulates in memory and a poller sees each phase as it happens.
+ * Same user, environment, process-group handling and sudoers detection.
+ *
+ * The child is a process-group leader of its own, so it is not tied to this
+ * process: a wrapper restart does not kill an upgrade half way through.
+ */
+export function spawnJobAsInstanceUser(
+  target: SudoSpawnTarget,
+  command: string[],
+  opts: JobSpawnOptions,
+): JobSpawnHandle {
+  const done = new Promise<{ exitCode: number | null; stderr: string }>((resolve, reject) => {
+    const child = spawn("sudo", ["-n", "-u", target.linuxUser, ...command], {
+      cwd: target.scriptsDir,
+      env: childEnv(target.linuxUser),
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
+
+    let pending = "";
+    let stderr = "";
+    let sudoError = false;
+    let killed = false;
+
+    const signalGroup = (signal: NodeJS.Signals): void => {
+      try {
+        process.kill(-child.pid!, signal);
+      } catch {
+        child.kill(signal);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      killed = true;
+      signalGroup("SIGTERM");
+      const kill = setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS);
+      kill.unref();
+      reject(new Error(`${opts.label} timed out after ${opts.timeoutMs / 1000}s`));
+    }, opts.timeoutMs);
+
+    child.stdout.on("data", (d: Buffer) => {
+      pending += d.toString();
+      let nl: number;
+      while ((nl = pending.indexOf("\n")) !== -1) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (/\[SUDO ERROR\]/i.test(line)) sudoError = true;
+        if (line) opts.onLine(line);
+      }
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      if (stderr.length < MAX_OUTPUT_BYTES) stderr += d.toString();
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (killed) return;
+      if (pending.trim()) opts.onLine(pending.trim());
+      if (sudoError || /\[SUDO ERROR\]/i.test(stderr)) {
+        reject(
+          new Error(
+            `Sudo not configured for '${target.linuxUser}'. See docs/sudoers-setup.md.`,
+          ),
+        );
+        return;
+      }
+      resolve({ exitCode: code, stderr: stderr.trim() });
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new Error(`Failed to start ${opts.label.toLowerCase()}: ${err.message}`));
+    });
+  });
+  return { done };
+}

@@ -7,12 +7,20 @@
 import type { FastifyReply } from "fastify";
 
 import { log } from "../platform/logger.js";
+import { OperationBusyError } from "../instances/operationSlot.js";
 
 export function internalError(
   reply: FastifyReply,
   context: string,
   err: unknown,
 ): FastifyReply {
+  // Not a fault: the instance is busy with something that must not overlap.
+  if (err instanceof OperationBusyError) {
+    return reply.status(423).send({
+      error: `Another operation is running (${err.busy.kind}). Try again when it has finished.`,
+      busy: err.busy,
+    });
+  }
   const msg = err instanceof Error ? err.message : String(err);
   log.error("routes", `${context}: ${msg}`);
   return reply.status(500).send({ error: "Internal server error" });
