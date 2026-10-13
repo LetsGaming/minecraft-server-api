@@ -20,6 +20,9 @@ unchanged.
 - **Lifecycle events.** `GET /instances/:id/events?since=<offset>` reads `logs/lifecycle.ndjson` (JVM start and exit, restart scheduled, crash loop gave up) with a byte-offset cursor. New feature `lifecycle-events`.
 - `platform/spawn.ts` `spawnJobAsInstanceUser`: streams a job's stdout line by line, in its own process group so a wrapper restart does not kill it.
 
+- **Chunk pruning.** `POST /instances/:id/prune/scans` starts a read-only scan of unused chunks as a background job (`GET .../prune/scans/:jobId` polls it); `GET .../prune/plans/:planId/map/:index` returns one dimension's map for drawing; `GET/PUT .../prune/settings` keeps the parameters; `POST .../operations/prune` deletes what a plan names as a job that stops the server, backs it up, deletes, starts it and restores the backup on failure (polled through the upgrade job routes). New feature `chunk-prune`; `Capabilities.prune` says whether `world/prune-chunks.js` exists. `POST /operations/upgrade` accepts `prunePlan` to prune inside an upgrade under its single backup.
+- Upgrade jobs report `kind` (`upgrade` or `prune`).
+
 ### Changed
 
 - **One slot per instance.** Stop, restart, rollback, backup, restore, mod writes and the upgrade now exclude each other: while one runs, another answers **423** `{ error, busy: { kind, jobId? } }` instead of racing it. Mod writes still queue behind each other. A status read is never blocked. New `423` response in the OpenAPI document.

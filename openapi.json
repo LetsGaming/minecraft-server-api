@@ -2681,6 +2681,119 @@
         }
       }
     },
+    "/instances/{id}/operations/prune": {
+      "post": {
+        "operationId": "postInstancesByIdOperationsPrune",
+        "summary": "Delete the chunks a scan found",
+        "description": "Runs in the background: players are warned, the server is stopped and backed up, the plan is applied (a fresh scan must still agree with at least 90 % of it), and the server is started. If the prune fails or the server does not come up, this job's own backup is restored. Poll it with `GET /operations/upgrade/:jobId`. Refused with 423 while anything else holds the instance.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PruneRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeStarted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Locked: another operation holds the instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationBusy"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/instances/{id}/operations/upgrade": {
       "post": {
         "operationId": "postInstancesByIdOperationsUpgrade",
@@ -2956,6 +3069,476 @@
           },
           "429": {
             "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/prune/plans/{planId}/map/{index}": {
+      "get": {
+        "operationId": "getInstancesByIdPrunePlansByPlanIdMapByIndex",
+        "summary": "The map of one dimension of a scan",
+        "description": "Per region, base64 bytes per chunk: its class (0 empty, 1 would be deleted, 2 busy, 3 protected, 4 buffer, 5 unreadable) and a heat level of its inhabited time. `index` is the dimension's position in the summary.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "planId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Plan id from the scan summary."
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Dimension index."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneMap"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/prune/scans": {
+      "post": {
+        "operationId": "postInstancesByIdPruneScans",
+        "summary": "Scan for unused chunks",
+        "description": "Reads every region file and stores a plan; changes nothing and is safe on a running server (the answer is approximate while chunks are being written). Without a body the saved settings are used. One scan runs at a time.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PruneParamsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneScanStarted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/prune/scans/{jobId}": {
+      "get": {
+        "operationId": "getInstancesByIdPruneScansByJobId",
+        "summary": "Progress and result of a prune scan",
+        "description": "The summary appears once `state` is `done`. The last few scans are kept.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Job id from the start request."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneScanJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/prune/settings": {
+      "get": {
+        "operationId": "getInstancesByIdPruneSettings",
+        "summary": "The saved chunk prune parameters",
+        "description": "What a scan uses when none are given. Defaults until saved.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneParams"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "putInstancesByIdPruneSettings",
+        "summary": "Save the chunk prune parameters",
+        "description": "Values are clamped to their limits by the setup suite; the reply is what was stored.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PruneParamsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneParams"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
             "content": {
               "application/json": {
                 "schema": {
@@ -4035,6 +4618,10 @@
           "upgrade": {
             "type": "boolean",
             "description": "update/upgrade.sh exists, so the version upgrade job can run."
+          },
+          "prune": {
+            "type": "boolean",
+            "description": "world/prune-chunks.js exists, so chunks can be pruned."
           }
         },
         "required": [
@@ -4043,7 +4630,8 @@
           "restore",
           "modManifest",
           "variablesFile",
-          "upgrade"
+          "upgrade",
+          "prune"
         ],
         "additionalProperties": false
       },
@@ -5242,6 +5830,307 @@
         ],
         "additionalProperties": false
       },
+      "PruneDimensionSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "regions": {
+            "type": "integer"
+          },
+          "chunks": {
+            "type": "integer"
+          },
+          "delete": {
+            "type": "integer"
+          },
+          "active": {
+            "type": "integer"
+          },
+          "protected": {
+            "type": "integer"
+          },
+          "buffer": {
+            "type": "integer"
+          },
+          "unreadable": {
+            "type": "integer"
+          },
+          "regionsEmptied": {
+            "type": "integer"
+          },
+          "bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "regions",
+          "chunks",
+          "delete",
+          "active",
+          "protected",
+          "buffer",
+          "unreadable",
+          "regionsEmptied",
+          "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "PruneMap": {
+        "type": "object",
+        "description": "One dimension of a plan, for drawing the map.",
+        "properties": {
+          "dimension": {
+            "type": "string"
+          },
+          "regions": {
+            "type": "object",
+            "description": "Per region (r.X.Z): base64 cell classes and heat levels, 1024 bytes each.",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "dimension",
+          "regions"
+        ],
+        "additionalProperties": false
+      },
+      "PruneParams": {
+        "type": "object",
+        "properties": {
+          "thresholdMinutes": {
+            "type": "number",
+            "description": "Chunks inhabited for less than this many minutes are candidates."
+          },
+          "spawnRadiusChunks": {
+            "type": "integer",
+            "description": "Chunks around the world spawn that are never pruned."
+          },
+          "playerRadiusChunks": {
+            "type": "integer",
+            "description": "Chunks around each player's last position that are never pruned."
+          },
+          "bufferChunks": {
+            "type": "integer",
+            "description": "Candidates this close to anything that stays are kept."
+          },
+          "zones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PruneZone"
+            },
+            "description": "Protected rectangles, in chunk coordinates, inclusive."
+          },
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "description": "Dimension ids to scan; null means every one found."
+          }
+        },
+        "required": [
+          "thresholdMinutes",
+          "spawnRadiusChunks",
+          "playerRadiusChunks",
+          "bufferChunks",
+          "zones",
+          "dimensions"
+        ],
+        "additionalProperties": false
+      },
+      "PruneParamsRequest": {
+        "type": "object",
+        "properties": {
+          "thresholdMinutes": {
+            "type": "number"
+          },
+          "spawnRadiusChunks": {
+            "type": "integer"
+          },
+          "playerRadiusChunks": {
+            "type": "integer"
+          },
+          "bufferChunks": {
+            "type": "integer"
+          },
+          "zones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PruneZone"
+            }
+          },
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PruneRequest": {
+        "type": "object",
+        "properties": {
+          "planId": {
+            "type": "string",
+            "description": "A plan id from a finished scan."
+          },
+          "countdownSeconds": {
+            "type": "integer",
+            "description": "Warning before the stop; default 30, at most 600."
+          }
+        },
+        "required": [
+          "planId"
+        ],
+        "additionalProperties": false
+      },
+      "PruneScanJob": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "done",
+              "failed"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/PruneSummary"
+          },
+          "error": {
+            "type": "string",
+            "description": "A fixed reason code when the scan failed."
+          }
+        },
+        "required": [
+          "jobId",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "PruneScanStarted": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "description": "The scan to poll."
+          }
+        },
+        "required": [
+          "jobId"
+        ],
+        "additionalProperties": false
+      },
+      "PruneSummary": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "description": "The plan id; pass it to the prune to apply exactly this preview."
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/components/schemas/PruneParams"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "chunks": {
+                "type": "integer"
+              },
+              "delete": {
+                "type": "integer"
+              },
+              "regions": {
+                "type": "integer"
+              },
+              "regionsEmptied": {
+                "type": "integer"
+              },
+              "bytes": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "chunks",
+              "delete",
+              "regions",
+              "regionsEmptied",
+              "bytes"
+            ],
+            "additionalProperties": false
+          },
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PruneDimensionSummary"
+            }
+          }
+        },
+        "required": [
+          "ok",
+          "id",
+          "createdAt",
+          "params",
+          "warnings",
+          "totals",
+          "dimensions"
+        ],
+        "additionalProperties": false
+      },
+      "PruneZone": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "dimension": {
+            "type": "string"
+          },
+          "x1": {
+            "type": "integer"
+          },
+          "z1": {
+            "type": "integer"
+          },
+          "x2": {
+            "type": "integer"
+          },
+          "z2": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "dimension",
+          "x1",
+          "z1",
+          "x2",
+          "z2"
+        ],
+        "additionalProperties": false
+      },
       "RestoreRefused": {
         "type": "object",
         "properties": {
@@ -5389,6 +6278,13 @@
           "jobId": {
             "type": "string"
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "upgrade",
+              "prune"
+            ]
+          },
           "state": {
             "type": "string",
             "enum": [
@@ -5434,6 +6330,10 @@
           "mcVersion": {
             "type": "string",
             "description": "The Minecraft version to move to."
+          },
+          "prunePlan": {
+            "type": "string",
+            "description": "A stored prune plan id to apply after the install, before the first start."
           },
           "expectUnavailable": {
             "type": "array",
@@ -5496,6 +6396,14 @@
           "reason": {
             "type": "string",
             "description": "Why it failed: apply_failed, prune_failed, crash_loop, timeout, backup_failed, ..."
+          },
+          "prunedChunks": {
+            "type": "integer",
+            "description": "Chunks the job deleted."
+          },
+          "bytesFreed": {
+            "type": "integer",
+            "description": "Disk space the prune returned."
           }
         },
         "required": [

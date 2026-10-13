@@ -30,6 +30,7 @@ import {
 } from "./shared.js";
 
 const JOB_ID_RE = /^[a-f0-9-]{36}$/;
+export const PLAN_ID_RE = /^[a-f0-9]{16}$/;
 const MAX_EXPECTED_MODS = 500;
 
 function sinceOf(raw: unknown): number | null {
@@ -44,7 +45,7 @@ export function registerOperationRoutes(
 ): void {
   app.post<{
     Params: InstanceParams;
-    Body: { mcVersion?: unknown; expectUnavailable?: unknown; countdownSeconds?: unknown };
+    Body: { mcVersion?: unknown; expectUnavailable?: unknown; countdownSeconds?: unknown; prunePlan?: unknown };
   }>(
     `${P}/operations/upgrade`,
     { schema: {
@@ -65,9 +66,12 @@ export function registerOperationRoutes(
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
 
-      const { mcVersion, expectUnavailable, countdownSeconds } = req.body ?? {};
+      const { mcVersion, expectUnavailable, countdownSeconds, prunePlan } = req.body ?? {};
       if (typeof mcVersion !== "string" || !MOD_VALIDATION.MC_VERSION_RE.test(mcVersion)) {
         return reply.status(400).send({ error: "Invalid or missing mcVersion" });
+      }
+      if (prunePlan !== undefined && (typeof prunePlan !== "string" || !PLAN_ID_RE.test(prunePlan))) {
+        return reply.status(400).send({ error: "Invalid prunePlan" });
       }
       let expected: string[] | undefined;
       if (expectUnavailable !== undefined) {
@@ -95,6 +99,7 @@ export function registerOperationRoutes(
           mcVersion,
           ...(expected ? { expectUnavailable: expected } : {}),
           ...(countdownSeconds !== undefined ? { countdownSeconds: countdownSeconds as number } : {}),
+          ...(prunePlan ? { prunePlan: prunePlan as string } : {}),
         });
         return reply.status(202).send(started);
       } catch (err) {

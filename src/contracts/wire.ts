@@ -178,6 +178,8 @@ export interface Capabilities {
   variablesFile: boolean;
   /** update/upgrade.sh exists, so the version upgrade job can run. */
   upgrade: boolean;
+  /** world/prune-chunks.js exists, so chunks can be pruned. */
+  prune: boolean;
 }
 
 /** One archive in the backups directory. */
@@ -337,17 +339,72 @@ export interface UpgradeResult {
   rolledBack?: boolean;
   previousVersionRunning?: boolean;
   reason?: string;
+  prunedChunks?: number;
+  bytesFreed?: number;
   [key: string]: unknown;
 }
 
 /** A version upgrade job; `events` holds only what came after `since`. */
 export interface UpgradeJob {
   jobId: string;
+  kind?: "upgrade" | "prune";
   state: "running" | "done" | "failed";
   mcVersion: string;
   events: UpgradeEvent[];
   next: number;
   result?: UpgradeResult;
+  error?: string;
+}
+
+export interface PruneZone {
+  name: string;
+  dimension: string;
+  /** Chunk coordinates, inclusive. */
+  x1: number;
+  z1: number;
+  x2: number;
+  z2: number;
+}
+
+export interface PruneParams {
+  /** Chunks inhabited for less than this many minutes are candidates. */
+  thresholdMinutes: number;
+  spawnRadiusChunks: number;
+  playerRadiusChunks: number;
+  /** Candidates within this many chunks of anything that stays are kept. */
+  bufferChunks: number;
+  zones: PruneZone[];
+  /** Dimension ids to scan; null means every one found. */
+  dimensions: string[] | null;
+}
+
+export interface PruneDimensionSummary {
+  id: string;
+  regions: number;
+  chunks: number;
+  delete: number;
+  active: number;
+  protected: number;
+  buffer: number;
+  unreadable: number;
+  regionsEmptied: number;
+  bytes: number;
+}
+
+export interface PruneSummary {
+  ok: boolean;
+  id: string;
+  createdAt: string;
+  params: PruneParams;
+  warnings: string[];
+  totals: { chunks: number; delete: number; regions: number; regionsEmptied: number; bytes: number };
+  dimensions: PruneDimensionSummary[];
+}
+
+export interface PruneScanJob {
+  jobId: string;
+  state: "running" | "done" | "failed";
+  result?: PruneSummary;
   error?: string;
 }
 

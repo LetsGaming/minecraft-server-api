@@ -102,6 +102,7 @@ const cases: Array<[string, S.JsonSchema, unknown]> = [
       modManifest: true,
       variablesFile: true,
       upgrade: true,
+      prune: true,
     } satisfies W.Capabilities,
   ],
   [

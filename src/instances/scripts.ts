@@ -32,6 +32,9 @@ export const RESTORE_SCRIPT = "backup/restore.sh";
 /** The version upgrade job, started through its own route like restore. */
 export const UPGRADE_SCRIPT = "update/upgrade.sh";
 
+/** Chunk pruning, started through its own routes. */
+export const PRUNE_SCRIPT = "world/prune-chunks.js";
+
 export const SCRIPT_MAP: Record<string, string> = {
   start: "start.sh",
   stop: "shutdown.sh",
@@ -99,7 +102,9 @@ async function getCapabilitiesUncached(): Promise<Capabilities> {
     modManifest,
     variablesFile,
     upgrade,
+    prune,
   ] = await Promise.all([
+
 
       scriptExists(SCRIPT_MAP.start!),
       scriptExists(SCRIPT_MAP.stop!),
@@ -116,6 +121,7 @@ async function getCapabilitiesUncached(): Promise<Capabilities> {
       scriptExists(path.join("common", "downloaded_versions.json")),
       scriptExists(path.join("common", "variables.txt")),
       scriptExists(UPGRADE_SCRIPT),
+      scriptExists(PRUNE_SCRIPT),
     ]);
   return {
     scripts: { start, stop, restart, rollback, backup, status },
@@ -124,6 +130,7 @@ async function getCapabilitiesUncached(): Promise<Capabilities> {
     modManifest,
     variablesFile,
     upgrade,
+    prune,
   };
 }
 

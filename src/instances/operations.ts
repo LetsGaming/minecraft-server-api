@@ -30,6 +30,7 @@ import { createTps } from "./tps.js";
 import { createWorld } from "./world.js";
 import { createOperationSlot } from "./operationSlot.js";
 import { createUpgrades } from "./upgrades.js";
+import { createPrune } from "./prune.js";
 import { createLifecycleEvents } from "./lifecycleEvents.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { InstanceHealth } from "../contracts/wire.js";
@@ -62,6 +63,7 @@ export function createOperations(cfg: InstanceConfig) {
   const scripts = createScripts(cfg, slot);
   const upgrades = createUpgrades(cfg, slot);
   const lifecycle = createLifecycleEvents(cfg);
+  const prune = createPrune(cfg);
 
   /** Full three-state health — see health.ts for why one boolean was not enough. */
   async function getHealth(): Promise<InstanceHealth> {
@@ -105,6 +107,7 @@ export function createOperations(cfg: InstanceConfig) {
     ...scripts,
     ...upgrades,
     ...lifecycle,
+    ...prune,
     getLevelName: world.getLevelName,
     getHealth,
     getFreshHealth,

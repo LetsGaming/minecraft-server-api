@@ -309,6 +309,7 @@ export const Capabilities = named(
     modManifest: boolean,
     variablesFile: boolean,
     upgrade: { ...boolean, description: "update/upgrade.sh exists, so the version upgrade job can run." },
+    prune: { ...boolean, description: "world/prune-chunks.js exists, so chunks can be pruned." },
   }),
 );
 
@@ -628,6 +629,7 @@ export const UpgradeRequest = named(
   object(
     {
       mcVersion: { ...string, description: "The Minecraft version to move to." },
+      prunePlan: { ...string, description: "A stored prune plan id to apply after the install, before the first start." },
       expectUnavailable: {
         ...array(string),
         description:
@@ -668,6 +670,8 @@ const UpgradeResult = named(
       rolledBack: boolean,
       previousVersionRunning: boolean,
       reason: { ...string, description: "Why it failed: apply_failed, prune_failed, crash_loop, timeout, backup_failed, ..." },
+      prunedChunks: { ...integer, description: "Chunks the job deleted." },
+      bytesFreed: { ...integer, description: "Disk space the prune returned." },
     },
     { required: ["ok"], open: true },
   ),
@@ -678,6 +682,7 @@ export const UpgradeJob = named(
   object(
     {
       jobId: string,
+      kind: { type: "string", enum: ["upgrade", "prune"] },
       state: { type: "string", enum: ["running", "done", "failed"] },
       mcVersion: string,
       events: { ...array(UpgradeEvent), description: "Progress lines after `since`." },
@@ -686,6 +691,122 @@ export const UpgradeJob = named(
       error: { ...string, description: "busy, failed or interrupted when there is no result." },
     },
     { required: ["jobId", "state", "mcVersion", "events", "next"] },
+  ),
+);
+
+const PruneZone = named(
+  "PruneZone",
+  object({
+    name: string,
+    dimension: string,
+    x1: integer,
+    z1: integer,
+    x2: integer,
+    z2: integer,
+  }),
+);
+
+export const PruneParams = named(
+  "PruneParams",
+  object(
+    {
+      thresholdMinutes: { ...number, description: "Chunks inhabited for less than this many minutes are candidates." },
+      spawnRadiusChunks: { ...integer, description: "Chunks around the world spawn that are never pruned." },
+      playerRadiusChunks: { ...integer, description: "Chunks around each player's last position that are never pruned." },
+      bufferChunks: { ...integer, description: "Candidates this close to anything that stays are kept." },
+      zones: { ...array(PruneZone), description: "Protected rectangles, in chunk coordinates, inclusive." },
+      dimensions: {
+        ...array(string),
+        nullable: true,
+        description: "Dimension ids to scan; null means every one found.",
+      },
+    },
+    { required: ["thresholdMinutes", "spawnRadiusChunks", "playerRadiusChunks", "bufferChunks", "zones", "dimensions"] },
+  ),
+);
+
+/** Every field optional: the script fills what is missing from its defaults. */
+export const PruneParamsRequest = named(
+  "PruneParamsRequest",
+  object(
+    {
+      thresholdMinutes: number,
+      spawnRadiusChunks: integer,
+      playerRadiusChunks: integer,
+      bufferChunks: integer,
+      zones: array(PruneZone),
+      dimensions: { ...array(string), nullable: true },
+    },
+    { required: [] },
+  ),
+);
+
+const PruneDimensionSummary = named(
+  "PruneDimensionSummary",
+  object({
+    id: string,
+    regions: integer,
+    chunks: integer,
+    delete: integer,
+    active: integer,
+    protected: integer,
+    buffer: integer,
+    unreadable: integer,
+    regionsEmptied: integer,
+    bytes: integer,
+  }),
+);
+
+export const PruneSummary = named(
+  "PruneSummary",
+  object({
+    ok: boolean,
+    id: { ...string, description: "The plan id; pass it to the prune to apply exactly this preview." },
+    createdAt: string,
+    params: PruneParams,
+    warnings: array(string),
+    totals: object({ chunks: integer, delete: integer, regions: integer, regionsEmptied: integer, bytes: integer }),
+    dimensions: array(PruneDimensionSummary),
+  }),
+);
+
+export const PruneScanStarted = named(
+  "PruneScanStarted",
+  object({ jobId: { ...string, description: "The scan to poll." } }),
+);
+
+export const PruneScanJob = named(
+  "PruneScanJob",
+  object(
+    {
+      jobId: string,
+      state: { type: "string", enum: ["running", "done", "failed"] },
+      result: PruneSummary,
+      error: { ...string, description: "A fixed reason code when the scan failed." },
+    },
+    { required: ["jobId", "state"] },
+  ),
+);
+
+export const PruneRequest = named(
+  "PruneRequest",
+  object(
+    {
+      planId: { ...string, description: "A plan id from a finished scan." },
+      countdownSeconds: { ...integer, description: "Warning before the stop; default 30, at most 600." },
+    },
+    { required: ["planId"] },
+  ),
+);
+
+export const PruneMap = named(
+  "PruneMap",
+  object(
+    {
+      dimension: string,
+      regions: freeForm("Per region (r.X.Z): base64 cell classes and heat levels, 1024 bytes each."),
+    },
+    { description: "One dimension of a plan, for drawing the map." },
   ),
 );
 

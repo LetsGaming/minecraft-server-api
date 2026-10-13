@@ -221,6 +221,23 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "writes and the upgrade answer 423 while another of them runs. Needs " +
       "a setup suite with update/upgrade.sh.",
   },
+  "chunk-prune": {
+    version: 1,
+    routes: [
+      "GET /instances/:id/prune/settings",
+      "PUT /instances/:id/prune/settings",
+      "POST /instances/:id/prune/scans",
+      "GET /instances/:id/prune/scans/:jobId",
+      "GET /instances/:id/prune/plans/:planId/map/:index",
+      "POST /instances/:id/operations/prune",
+    ],
+    summary:
+      "Deleting unused chunks so a new Minecraft version regenerates them: a " +
+      "read-only scan as a background job with per-dimension maps, saved " +
+      "settings, and a prune job (stop, back up, delete, start, restore on " +
+      "failure) polled through the operations routes. Needs a setup suite " +
+      "with world/prune-chunks.js.",
+  },
   "lifecycle-events": {
     version: 1,
     routes: ["GET /instances/:id/events"],

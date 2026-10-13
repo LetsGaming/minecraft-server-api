@@ -42,14 +42,20 @@ export class UpgradeUnavailableError extends Error {
 }
 
 export interface UpgradeRequest {
-  mcVersion: string;
+  /** The version to move to. Absent for a prune-only job. */
+  mcVersion?: string;
   /** The mods the user saw reported as unavailable; the job refuses if they changed. */
   expectUnavailable?: string[];
   countdownSeconds?: number;
+  /** A stored prune plan to apply after the install, before the first start. */
+  prunePlan?: string;
+  /** Run the prune alone: stop, back up, prune, start. */
+  pruneOnly?: boolean;
 }
 
 interface Job {
   id: string;
+  kind: "upgrade" | "prune";
   mcVersion: string;
   state: "running" | "done" | "failed";
   startedAt: number;
@@ -138,12 +144,14 @@ export function createUpgrades(
     if (!script) throw new UpgradeUnavailableError();
 
     const jobId = randomUUID();
-    const release = slot.begin("upgrade", jobId);
+    const kind = request.pruneOnly ? "prune" : "upgrade";
+    const release = slot.begin(kind, jobId);
     if (!release) throw new OperationBusyError(slot.current() ?? { kind: "unknown" });
 
     const job: Job = {
       id: jobId,
-      mcVersion: request.mcVersion,
+      kind,
+      mcVersion: request.mcVersion ?? "",
       state: "running",
       startedAt: now(),
       finishedAt: null,
@@ -153,7 +161,8 @@ export function createUpgrades(
     };
     jobs.set(jobId, job);
 
-    const args = [request.mcVersion];
+    const args: string[] = request.pruneOnly ? ["--prune-only"] : [request.mcVersion ?? ""];
+    if (request.prunePlan) args.push(`--prune-plan=${request.prunePlan}`);
     if (request.expectUnavailable) {
       args.push(`--expect-unavailable=${request.expectUnavailable.join(",")}`);
     }
@@ -201,6 +210,7 @@ export function createUpgrades(
     const events = job.events.filter((e) => e.seq > since);
     return {
       jobId: job.id,
+      kind: job.kind,
       state: job.state,
       mcVersion: job.mcVersion,
       events,
@@ -246,6 +256,7 @@ export function createUpgrades(
     const interrupted = !result && slot.current() === null;
     return {
       jobId: "recovered",
+      kind: "upgrade",
       state: result ? (result.ok ? "done" : "failed") : interrupted ? "failed" : "running",
       mcVersion: "",
       events: fresh,
