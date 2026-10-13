@@ -228,6 +228,7 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "PUT /instances/:id/prune/settings",
       "GET /instances/:id/prune/dimensions",
       "GET /instances/:id/prune/status",
+      "GET /instances/:id/prune/plans/:planId/chunk",
       "POST /instances/:id/prune/scans",
       "GET /instances/:id/prune/scans/:jobId",
       "POST /instances/:id/prune/scans/:jobId/cancel",

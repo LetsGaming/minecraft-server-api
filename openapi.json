@@ -3163,6 +3163,135 @@
         }
       }
     },
+    "/instances/{id}/prune/plans/{planId}/chunk": {
+      "get": {
+        "operationId": "getInstancesByIdPrunePlansByPlanIdChunk",
+        "summary": "One chunk of a plan, in full",
+        "description": "Reads the chunk now and reports what it contains (block entities, structures), how long players were near it, how much space it takes, whether the plan deletes it and which protections cover it. For the map's inspector; the map itself stays light.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "planId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Plan id from the scan summary."
+          },
+          {
+            "name": "dimension",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Dimension id from the summary."
+          },
+          {
+            "name": "cx",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Chunk x coordinate."
+          },
+          {
+            "name": "cz",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Chunk z coordinate."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneChunkInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/instances/{id}/prune/plans/{planId}/map/{index}": {
       "get": {
         "operationId": "getInstancesByIdPrunePlansByPlanIdMapByIndex",
@@ -6090,6 +6219,171 @@
         ],
         "additionalProperties": false
       },
+      "PruneChunkInfo": {
+        "type": "object",
+        "properties": {
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "dimension": {
+                "type": "string"
+              },
+              "cx": {
+                "type": "integer"
+              },
+              "cz": {
+                "type": "integer"
+              },
+              "rx": {
+                "type": "integer"
+              },
+              "rz": {
+                "type": "integer"
+              },
+              "slot": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "dimension",
+              "cx",
+              "cz",
+              "rx",
+              "rz",
+              "slot"
+            ],
+            "additionalProperties": false
+          },
+          "thresholdMinutes": {
+            "type": "number"
+          },
+          "present": {
+            "type": "boolean",
+            "description": "Whether the world has this chunk at all."
+          },
+          "readable": {
+            "type": "boolean",
+            "description": "False when the chunk exists but cannot be read; it is then never deleted."
+          },
+          "unreadableReason": {
+            "type": "string"
+          },
+          "plannedForDeletion": {
+            "type": "boolean",
+            "description": "Whether this plan deletes the chunk."
+          },
+          "bytes": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "integer"
+              },
+              "entities": {
+                "type": "integer"
+              },
+              "poi": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "region",
+              "entities",
+              "poi"
+            ],
+            "additionalProperties": false
+          },
+          "dataVersion": {
+            "type": "integer",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastUpdate": {
+            "type": "integer",
+            "nullable": true
+          },
+          "inhabitedTicks": {
+            "type": "number",
+            "nullable": true
+          },
+          "inhabitedMinutes": {
+            "type": "number",
+            "nullable": true
+          },
+          "blockEntities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "count"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "structureStarts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "structureReferences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unexplained": {
+            "type": "boolean",
+            "description": "Block entities that no structure or spawner explains."
+          },
+          "protectedBy": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "spawn",
+                    "player",
+                    "zone"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "chunk",
+          "thresholdMinutes",
+          "present"
+        ],
+        "additionalProperties": false
+      },
       "PruneDimensions": {
         "type": "object",
         "properties": {
@@ -6145,6 +6439,10 @@
           },
           "unreadable": {
             "type": "integer"
+          },
+          "uncertain": {
+            "type": "integer",
+            "description": "Kept by build protection: the rules would delete them but they hold things a structure does not explain."
           },
           "manualSoft": {
             "type": "integer",
@@ -6274,6 +6572,14 @@
           },
           "selection": {
             "$ref": "#/components/schemas/PruneSelection"
+          },
+          "buildProtection": {
+            "type": "string",
+            "enum": [
+              "off",
+              "likely"
+            ],
+            "description": "likely: keep chunks the rules would delete when they hold block entities no structure explains (chests, signs, furnaces, beds, redstone parts, modded blocks). off: ignore what chunks contain."
           }
         },
         "required": [
@@ -6316,6 +6622,13 @@
           },
           "selection": {
             "$ref": "#/components/schemas/PruneSelection"
+          },
+          "buildProtection": {
+            "type": "string",
+            "enum": [
+              "off",
+              "likely"
+            ]
           }
         },
         "additionalProperties": false

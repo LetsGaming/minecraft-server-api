@@ -17,6 +17,7 @@ import { log } from "../platform/logger.js";
 import { interpreter, runAsInstanceUser, spawnJobAsInstanceUser, type JobSpawnHandle } from "../platform/spawn.js";
 import type { InstanceConfig } from "../config/types.js";
 import type {
+  PruneChunkInfo,
   PruneDimensions,
   PruneEngineStatus,
   PruneParams,
@@ -81,7 +82,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Error codes the script may report; anything else reaches a client as "failed". */
-const KNOWN_CODES = new Set(["params", "scan_failed", "server_path", "cancelled"]);
+const KNOWN_CODES = new Set(["params", "scan_failed", "server_path", "cancelled", "plan_missing", "dimension", "inspect_failed"]);
 
 /** The numeric fields of a progress line, or null for a line that is not one. */
 function parseProgress(line: Record<string, unknown>): PruneScanProgress | null {
@@ -257,6 +258,22 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
     return { dimensions: dimensions.map((d) => ({ id: d.id, regions: d.regions })) };
   }
 
+  /** One chunk of a stored plan, read now. Null when the plan is gone. */
+  async function inspectPruneChunk(planId: string, dimension: string, cx: number, cz: number): Promise<PruneChunkInfo | null> {
+    try {
+      const parsed = await scriptCall(
+        ["--inspect", `--plan=${planId}`, `--dimension=${dimension}`, `--cx=${cx}`, `--cz=${cz}`],
+        "Prune inspect",
+      );
+      const info: Record<string, unknown> = { ...parsed };
+      delete info.ok;
+      return info as unknown as PruneChunkInfo;
+    } catch (err) {
+      if (err instanceof PruneScriptError && err.code === "plan_missing") return null;
+      throw err;
+    }
+  }
+
   /** Engine version, and a note when an earlier delete did not finish. */
   async function getPruneStatus(): Promise<PruneEngineStatus> {
     const parsed = await scriptCall(["--status"], "Prune status");
@@ -299,6 +316,7 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
     cancelPruneScan,
     getPruneDimensions,
     getPruneStatus,
+    inspectPruneChunk,
     getPruneSettings,
     setPruneSettings,
     readPruneMap,

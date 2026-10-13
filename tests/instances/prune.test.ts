@@ -97,6 +97,16 @@ describe("scan progress, cancel, dimensions and status", () => {
     expect(runCalls[0]).toContain("--dimensions");
   });
 
+  it("inspects one chunk of a plan through the script", async () => {
+    const { prune, setRunOutput, runCalls } = setup();
+    setRunOutput(JSON.stringify({ ok: true, chunk: { dimension: "overworld", cx: -3, cz: 4, rx: -1, rz: 0, slot: 133 }, thresholdMinutes: 5, present: true, readable: true, plannedForDeletion: true }));
+    const info = await prune.inspectPruneChunk("0123456789abcdef", "overworld", -3, 4);
+    expect(info).toMatchObject({ present: true, plannedForDeletion: true });
+    expect(runCalls[0]).toEqual(expect.arrayContaining(["--inspect", "--plan=0123456789abcdef", "--dimension=overworld", "--cx=-3", "--cz=4"]));
+    setRunOutput(JSON.stringify({ ok: false, code: "plan_missing" }));
+    expect(await prune.inspectPruneChunk("0123456789abcdef", "overworld", 0, 0)).toBeNull();
+  });
+
   it("reports an unfinished delete from the status", async () => {
     const { prune, setRunOutput } = setup();
     setRunOutput(JSON.stringify({ ok: true, engine: "builtin", version: 1, unfinishedApply: { state: "applying", plan: "0123456789abcdef", startedAt: "2026-10-13T10:00:00Z", pid: 4 } }));

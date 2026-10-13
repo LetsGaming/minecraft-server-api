@@ -4,6 +4,7 @@
  *   chunk-prune  GET/PUT /prune/settings         the saved parameters,
  *                GET  /prune/dimensions          the world's dimensions, no chunk read,
  *                GET  /prune/status              engine version, an unfinished delete,
+ *                GET  /prune/plans/:planId/chunk one chunk of a plan, in full,
  *                POST /prune/scans               start a read-only scan (a job),
  *                GET  /prune/scans/:jobId        poll it (with progress),
  *                POST /prune/scans/:jobId/cancel stop it,
@@ -20,6 +21,7 @@ import type { FastifyInstance } from "fastify";
 
 import {
   PruneCancelled,
+  PruneChunkInfo,
   PruneDimensions,
   PruneEngineStatus,
   PruneMap,
@@ -31,7 +33,7 @@ import {
   UpgradeStarted,
 } from "../../../contracts/schemas.js";
 import type { PruneParams as PruneParamsBody } from "../../../contracts/wire.js";
-import { errors, instanceParams } from "../../../contracts/routeSchema.js";
+import { errors, instanceParams, queryParams } from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
 import { PruneBusyError, PruneScriptError, PruneUnavailableError } from "../../../instances/prune.js";
 import { PrunePlanMissingError, UpgradeUnavailableError, MAX_COUNTDOWN_SECONDS } from "../../../instances/upgrades.js";
@@ -91,6 +93,10 @@ export function parsePruneParams(body: unknown): Partial<PruneParamsBody> | null
     out.dimensions = body.dimensions as string[];
   } else if (body.dimensions === null) {
     out.dimensions = null;
+  }
+  if (body.buildProtection !== undefined) {
+    if (body.buildProtection !== "off" && body.buildProtection !== "likely") return null;
+    out.buildProtection = body.buildProtection;
   }
   if (body.selection !== undefined) {
     const sel = body.selection;
@@ -272,6 +278,43 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
       const job = entry.getPruneScan(req.params.jobId);
       if (!job) return reply.status(404).send({ error: "Unknown or expired scan" });
       return job;
+    },
+  );
+
+  app.get<{ Params: InstanceParams & { planId: string }; Querystring: { dimension?: string; cx?: string; cz?: string } }>(
+    `${P}/prune/plans/:planId/chunk`,
+    { schema: {
+      summary: "One chunk of a plan, in full",
+      description:
+        "Reads the chunk now and reports what it contains (block entities, structures), how long " +
+        "players were near it, how much space it takes, whether the plan deletes it and which " +
+        "protections cover it. For the map's inspector; the map itself stays light.",
+      tags: ["prune"],
+      params: instanceParams({ planId: "Plan id from the scan summary." }),
+      querystring: queryParams({
+        dimension: "Dimension id from the summary.",
+        cx: "Chunk x coordinate.",
+        cz: "Chunk z coordinate.",
+      }),
+      response: { 200: PruneChunkInfo, ...errors(400, 404, 500, 501) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      const { dimension, cx, cz } = req.query;
+      if (!PLAN_ID_RE.test(req.params.planId)) return reply.status(400).send({ error: "Invalid plan" });
+      if (typeof dimension !== "string" || !DIMENSION_RE.test(dimension)) return reply.status(400).send({ error: "Invalid dimension" });
+      const x = Number(cx);
+      const z = Number(cz);
+      if (!coord(x) || !coord(z)) return reply.status(400).send({ error: "Invalid chunk" });
+      try {
+        const info = await entry.inspectPruneChunk(req.params.planId, dimension, x, z);
+        if (info === null) return reply.status(404).send({ error: "Unknown or expired plan" });
+        return info;
+      } catch (err) {
+        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+        return internalError(reply, `prune/chunk ${req.params.id}`, err);
+      }
     },
   );
 

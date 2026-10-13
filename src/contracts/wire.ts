@@ -377,6 +377,28 @@ export interface PruneParams {
   /** Dimension ids to scan; null means every one found. */
   dimensions: string[] | null;
   selection?: PruneSelection;
+  buildProtection?: "off" | "likely";
+}
+
+export interface PruneChunkInfo {
+  chunk: { dimension: string; cx: number; cz: number; rx: number; rz: number; slot: number };
+  thresholdMinutes: number;
+  present: boolean;
+  readable?: boolean;
+  unreadableReason?: string;
+  plannedForDeletion?: boolean;
+  bytes?: { region: number; entities: number; poi: number };
+  dataVersion?: number | null;
+  status?: string | null;
+  lastUpdate?: number | null;
+  inhabitedTicks?: number | null;
+  inhabitedMinutes?: number | null;
+  blockEntities?: Array<{ id: string; count: number }>;
+  structureStarts?: string[];
+  structureReferences?: string[];
+  signals?: string[];
+  unexplained?: boolean;
+  protectedBy?: Array<{ kind: "spawn" | "player" | "zone"; name?: string }>;
 }
 
 export interface PruneSelectionOp {
@@ -402,6 +424,7 @@ export interface PruneDimensionSummary {
   protected: number;
   buffer: number;
   unreadable: number;
+  uncertain?: number;
   manualSoft?: number;
   manualHard?: number;
   manualBlocked?: number;

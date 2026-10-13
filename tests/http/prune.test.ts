@@ -24,6 +24,7 @@ function build(overrides: Record<string, unknown> = {}) {
     getPruneScan: vi.fn(() => ({ jobId: JOB, state: "running" })),
     getPruneDimensions: vi.fn(async () => ({ dimensions: [{ id: "overworld", regions: 4 }] })),
     getPruneStatus: vi.fn(async () => ({ engine: "builtin", version: 1 })),
+    inspectPruneChunk: vi.fn(async () => ({ chunk: { dimension: "overworld", cx: 1, cz: 2, rx: 0, rz: 0, slot: 65 }, thresholdMinutes: 5, present: true, readable: true, blockEntities: [{ id: "minecraft:chest", count: 2 }], protectedBy: [{ kind: "zone", name: "base" }] })),
     cancelPruneScan: vi.fn(() => true),
     readPruneMap: vi.fn(async () => '{"dimension":"overworld","regions":{"r.0.0":{"cell":"AA==","heat":"AA=="}}}'),
     startUpgrade: vi.fn(async () => ({ jobId: JOB })),
@@ -162,6 +163,22 @@ describe("dimensions, status and cancel", () => {
     expect((await app.inject({ method: "POST", url: url("/prune/scans/x/cancel") })).statusCode).toBe(400);
   });
 
+  it("describes one chunk, and 404s a plan that is gone", async () => {
+    const { app, entry } = build();
+    const res = await app.inject({ url: url(`/prune/plans/${PLAN}/chunk?dimension=overworld&cx=1&cz=2`) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ present: true, blockEntities: [{ id: "minecraft:chest", count: 2 }], protectedBy: [{ kind: "zone", name: "base" }] });
+    expect(entry.inspectPruneChunk).toHaveBeenCalledWith(PLAN, "overworld", 1, 2);
+    const gone = build({ inspectPruneChunk: vi.fn(async () => null) });
+    expect((await gone.app.inject({ url: url(`/prune/plans/${PLAN}/chunk?dimension=overworld&cx=1&cz=2`) })).statusCode).toBe(404);
+  });
+
+  it.each(["dimension=overworld&cx=a&cz=2", "dimension=Over World&cx=1&cz=2", "cx=1&cz=2", "dimension=overworld&cx=1.5&cz=2", "dimension=overworld&cx=9999999999&cz=2"])("400s a bad chunk request: %s", async (query) => {
+    const { app, entry } = build();
+    expect((await app.inject({ url: url(`/prune/plans/${PLAN}/chunk?${query}`) })).statusCode).toBe(400);
+    expect(entry.inspectPruneChunk).not.toHaveBeenCalled();
+  });
+
   it("501s when the suite has no prune script", async () => {
     const { app } = build({ getPruneDimensions: vi.fn(async () => { throw new PruneUnavailableError(); }) });
     expect((await app.inject({ url: url("/prune/dimensions") })).statusCode).toBe(501);
@@ -199,6 +216,15 @@ describe("POST /operations/prune", () => {
     const res = await post(app, { planId: PLAN });
     expect(res.statusCode).toBe(423);
     expect(res.json()).toMatchObject({ busy: { kind: "backup" } });
+  });
+});
+
+describe("parsePruneParams build protection", () => {
+  it("accepts off and likely only", () => {
+    expect(parsePruneParams({ buildProtection: "off" })).toEqual({ buildProtection: "off" });
+    expect(parsePruneParams({ buildProtection: "likely" })).toEqual({ buildProtection: "likely" });
+    expect(parsePruneParams({ buildProtection: "always" })).toBeNull();
+    expect(parsePruneParams({ buildProtection: true })).toBeNull();
   });
 });
 

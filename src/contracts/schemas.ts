@@ -753,6 +753,13 @@ export const PruneParams = named(
         description: "Dimension ids to scan; null means every one found.",
       },
       selection: PruneSelection,
+      buildProtection: {
+        type: "string",
+        enum: ["off", "likely"],
+        description:
+          "likely: keep chunks the rules would delete when they hold block entities no structure explains " +
+          "(chests, signs, furnaces, beds, redstone parts, modded blocks). off: ignore what chunks contain.",
+      },
     },
     { required: ["thresholdMinutes", "spawnRadiusChunks", "playerRadiusChunks", "bufferChunks", "zones", "dimensions"] },
   ),
@@ -770,6 +777,7 @@ export const PruneParamsRequest = named(
       zones: array(PruneZone),
       dimensions: { ...array(string), nullable: true },
       selection: PruneSelection,
+      buildProtection: { type: "string", enum: ["off", "likely"] },
     },
     { required: [] },
   ),
@@ -787,6 +795,7 @@ const PruneDimensionSummary = named(
       protected: integer,
       buffer: integer,
       unreadable: integer,
+      uncertain: { ...integer, description: "Kept by build protection: the rules would delete them but they hold things a structure does not explain." },
       manualSoft: { ...integer, description: "Chosen by hand over a soft rule (in use, buffer); part of delete." },
       manualHard: { ...integer, description: "Chosen by hand over a hard protection; part of delete." },
       manualBlocked: { ...integer, description: "Chosen by hand but kept: unreadable, or protected without the override." },
@@ -842,6 +851,33 @@ export const PruneScanJob = named(
       progress: PruneScanProgress,
     },
     { required: ["jobId", "state"] },
+  ),
+);
+
+export const PruneChunkInfo = named(
+  "PruneChunkInfo",
+  object(
+    {
+      chunk: object({ dimension: string, cx: integer, cz: integer, rx: integer, rz: integer, slot: integer }),
+      thresholdMinutes: number,
+      present: { type: "boolean", description: "Whether the world has this chunk at all." },
+      readable: { type: "boolean", description: "False when the chunk exists but cannot be read; it is then never deleted." },
+      unreadableReason: string,
+      plannedForDeletion: { type: "boolean", description: "Whether this plan deletes the chunk." },
+      bytes: object({ region: integer, entities: integer, poi: integer }),
+      dataVersion: { type: "integer", nullable: true },
+      status: { type: "string", nullable: true },
+      lastUpdate: { type: "integer", nullable: true },
+      inhabitedTicks: { type: "number", nullable: true },
+      inhabitedMinutes: { type: "number", nullable: true },
+      blockEntities: array(object({ id: string, count: integer })),
+      structureStarts: array(string),
+      structureReferences: array(string),
+      signals: array(string),
+      unexplained: { type: "boolean", description: "Block entities that no structure or spawner explains." },
+      protectedBy: array(object({ kind: { type: "string", enum: ["spawn", "player", "zone"] }, name: string }, { required: ["kind"] })),
+    },
+    { required: ["chunk", "thresholdMinutes", "present"] },
   ),
 );
 
