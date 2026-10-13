@@ -5,6 +5,9 @@
  *   [2026-07-06 10:00:00] [INFO] [survival] message
  */
 
+import fs from "node:fs";
+import path from "node:path";
+
 type Level = "INFO" | "WARN" | "ERROR" | "DEBUG";
 
 function ts(): string {
@@ -72,8 +75,52 @@ export function logFields(fields: Record<string, unknown>): string {
     .join(" ");
 }
 
+const LOG_FILE_MAX_BYTES = 5 * 1024 * 1024;
+const LOG_FILES_KEPT = 3;
+const ROTATE_CHECK_EVERY = 200;
+
+/**
+ * Where lines are also written: MC_LOG_DIR, else ./logs of the working directory (the unit's
+ * WorkingDirectory). An empty MC_LOG_DIR turns the file off; a test run is off unless it sets one.
+ */
+function logDir(): string | null {
+  const set = process.env.MC_LOG_DIR;
+  if (set !== undefined) return set === "" ? null : set;
+  return process.env.VITEST ? null : path.join(process.cwd(), "logs");
+}
+
+let fileFailed = false;
+let sinceCheck = ROTATE_CHECK_EVERY;
+
+function rotate(file: string): void {
+  if (fs.statSync(file).size < LOG_FILE_MAX_BYTES) return;
+  for (let i = LOG_FILES_KEPT - 1; i >= 1; i--) {
+    if (fs.existsSync(`${file}.${i}`)) fs.renameSync(`${file}.${i}`, `${file}.${i + 1}`);
+  }
+  fs.renameSync(file, `${file}.1`);
+}
+
+function writeFile(line: string): void {
+  const dir = logDir();
+  if (!dir || fileFailed) return;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "api-server.log");
+    if (++sinceCheck >= ROTATE_CHECK_EVERY) {
+      sinceCheck = 0;
+      if (fs.existsSync(file)) rotate(file);
+    }
+    fs.appendFileSync(file, `${line}\n`);
+  } catch (err) {
+    fileFailed = true;
+    // eslint-disable-next-line no-console
+    console.error(`[${ts()}] [WARN] [log] cannot write ${dir}, logging to the journal only: ${(err as Error).message}`);
+  }
+}
+
 function emit(level: Level, scope: string, msg: string): void {
   const line = `[${ts()}] [${level}] [${logSafe(scope, 100)}] ${logSafe(msg, LOG_LINE_MAX)}`;
+  writeFile(line);
   // eslint-disable-next-line no-console
   if (level === "ERROR" || level === "WARN") console.error(line);
   // eslint-disable-next-line no-console
