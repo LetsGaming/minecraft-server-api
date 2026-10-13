@@ -10,6 +10,7 @@ import { registerPruneRoutes, parsePruneParams } from "../../src/http/routes/ins
 import type { InstanceEntry } from "../../src/http/routes/instance/shared.js";
 import { PruneBusyError, PruneScriptError, PruneUnavailableError } from "../../src/instances/prune.js";
 import { OperationBusyError } from "../../src/instances/operationSlot.js";
+import { PrunePlanMissingError } from "../../src/instances/upgrades.js";
 
 const JOB = "6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f";
 const PLAN = "0123456789abcdef";
@@ -155,6 +156,11 @@ describe("POST /operations/prune", () => {
       expect(entry.startUpgrade).not.toHaveBeenCalled();
     },
   );
+
+  it("404s a plan that no longer exists", async () => {
+    const { app } = build({ startUpgrade: vi.fn(async () => { throw new PrunePlanMissingError(); }) });
+    expect((await post(app, { planId: PLAN })).statusCode).toBe(404);
+  });
 
   it("423s while something else holds the instance", async () => {
     const { app } = build({ startUpgrade: vi.fn(async () => { throw new OperationBusyError({ kind: "backup" }); }) });

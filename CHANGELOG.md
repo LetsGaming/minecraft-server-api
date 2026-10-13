@@ -27,6 +27,10 @@ unchanged.
 
 - **One slot per instance.** Stop, restart, rollback, backup, restore, mod writes and the upgrade now exclude each other: while one runs, another answers **423** `{ error, busy: { kind, jobId? } }` instead of racing it. Mod writes still queue behind each other. A status read is never blocked. New `423` response in the OpenAPI document.
 
+### Fixed
+
+- A prune job (`POST .../operations/prune`, or `prunePlan` on an upgrade) whose plan file is gone is refused with 404 before the server is stopped, instead of failing after the stop and forcing a restore. When the wrapper cannot read the plan directory it cannot tell, and the script's own check decides.
+
 ## [4.0.0] - 2026-10-10
 
 Several changes below are marked **BREAKING**: they need a matching change in the bot or in the wrapper's configuration. Update the wrapper first, then the bot.

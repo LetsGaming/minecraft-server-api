@@ -28,7 +28,7 @@ import type { PruneParams as PruneParamsBody } from "../../../contracts/wire.js"
 import { errors, instanceParams } from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
 import { PruneBusyError, PruneScriptError, PruneUnavailableError } from "../../../instances/prune.js";
-import { UpgradeUnavailableError, MAX_COUNTDOWN_SECONDS } from "../../../instances/upgrades.js";
+import { PrunePlanMissingError, UpgradeUnavailableError, MAX_COUNTDOWN_SECONDS } from "../../../instances/upgrades.js";
 import { PLAN_ID_RE } from "./operations.js";
 import {
   INSTANCE_PREFIX as P,
@@ -257,6 +257,7 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
         return reply.status(202).send(started);
       } catch (err) {
         if (err instanceof UpgradeUnavailableError) return reply.status(501).send({ error: err.message });
+        if (err instanceof PrunePlanMissingError) return reply.status(404).send({ error: err.message });
         return internalError(reply, `operations/prune ${req.params.id}`, err);
       }
     },

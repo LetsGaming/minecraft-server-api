@@ -22,7 +22,7 @@ import {
 import { errors, instanceParams, queryParams } from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
 import { MOD_VALIDATION } from "../../../instances/mods.js";
-import { MAX_COUNTDOWN_SECONDS, UpgradeUnavailableError } from "../../../instances/upgrades.js";
+import { MAX_COUNTDOWN_SECONDS, PrunePlanMissingError, UpgradeUnavailableError } from "../../../instances/upgrades.js";
 import {
   INSTANCE_PREFIX as P,
   type InstanceParams,
@@ -106,6 +106,7 @@ export function registerOperationRoutes(
         if (err instanceof UpgradeUnavailableError) {
           return reply.status(501).send({ error: err.message });
         }
+        if (err instanceof PrunePlanMissingError) return reply.status(404).send({ error: err.message });
         return internalError(reply, `operations/upgrade ${req.params.id}`, err);
       }
     },

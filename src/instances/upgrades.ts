@@ -41,6 +41,12 @@ export class UpgradeUnavailableError extends Error {
   }
 }
 
+export class PrunePlanMissingError extends Error {
+  constructor() {
+    super("That prune plan does not exist any more. Scan again.");
+  }
+}
+
 export interface UpgradeRequest {
   /** The version to move to. Absent for a prune-only job. */
   mcVersion?: string;
@@ -139,9 +145,24 @@ export function createUpgrades(
     }
   }
 
+  /**
+   * True only when the plan file is certainly absent. The plan directory belongs
+   * to the instance user, so a permission error means "cannot tell", and the
+   * script's own check before the stop then decides.
+   */
+  async function planIsGone(planId: string): Promise<boolean> {
+    try {
+      await fsp.access(path.join(cfg.scriptsDir, "common", "prune", `${planId}.plan.json`));
+      return false;
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code === "ENOENT";
+    }
+  }
+
   async function start(request: UpgradeRequest): Promise<{ jobId: string }> {
     const script = await scriptPath();
     if (!script) throw new UpgradeUnavailableError();
+    if (request.prunePlan && (await planIsGone(request.prunePlan))) throw new PrunePlanMissingError();
 
     const jobId = randomUUID();
     const kind = request.pruneOnly ? "prune" : "upgrade";
