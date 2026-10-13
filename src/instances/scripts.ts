@@ -10,6 +10,7 @@ import path from "path";
 
 import { cached } from "../platform/cache.js";
 import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
+import { createOperationSlot, type OperationSlot } from "./operationSlot.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { Capabilities, ScriptResult } from "../contracts/wire.js";
 
@@ -27,6 +28,12 @@ const CAPABILITIES_STALE_MS = 3_600_000;
  * backups.ts). Naming it here keeps the capability probe in one place.
  */
 export const RESTORE_SCRIPT = "backup/restore.sh";
+
+/** The version upgrade job, started through its own route like restore. */
+export const UPGRADE_SCRIPT = "update/upgrade.sh";
+
+/** Chunk pruning, started through its own routes. */
+export const PRUNE_SCRIPT = "world/prune-chunks.js";
 
 export const SCRIPT_MAP: Record<string, string> = {
   start: "start.sh",
@@ -70,7 +77,7 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
-export function createScripts(cfg: InstanceConfig) {
+export function createScripts(cfg: InstanceConfig, slot: OperationSlot = createOperationSlot()) {
 /**
  * M-13 (bot-side capability detection): report which setup-suite
  * artifacts exist for this instance. The response shape must stay in
@@ -94,7 +101,11 @@ async function getCapabilitiesUncached(): Promise<Capabilities> {
     backups,
     modManifest,
     variablesFile,
+    upgrade,
+    prune,
   ] = await Promise.all([
+
+
       scriptExists(SCRIPT_MAP.start!),
       scriptExists(SCRIPT_MAP.stop!),
       scriptExists(SCRIPT_MAP.restart!),
@@ -109,6 +120,8 @@ async function getCapabilitiesUncached(): Promise<Capabilities> {
       cfg.backupsPath ? exists(cfg.backupsPath) : Promise.resolve(false),
       scriptExists(path.join("common", "downloaded_versions.json")),
       scriptExists(path.join("common", "variables.txt")),
+      scriptExists(UPGRADE_SCRIPT),
+      scriptExists(PRUNE_SCRIPT),
     ]);
   return {
     scripts: { start, stop, restart, rollback, backup, status },
@@ -116,6 +129,8 @@ async function getCapabilitiesUncached(): Promise<Capabilities> {
     restore,
     modManifest,
     variablesFile,
+    upgrade,
+    prune,
   };
 }
 
@@ -141,10 +156,13 @@ async function runScript(action: string, args?: string[]): Promise<ScriptResult>
   // The spawn dance (process-group leader, group-kill timeout, sudoers
   // detection, [sudo] filtering) lives in platform/spawn.ts, shared with the
   // restore and mod runners so the security-relevant details cannot drift.
-  return runAsInstanceUser(cfg, [interpreter("bash"), scriptPath, ...(args ?? [])], {
-    timeoutMs,
-    label: "Script",
-  });
+  const run = (): Promise<ScriptResult> =>
+    runAsInstanceUser(cfg, [interpreter("bash"), scriptPath, ...(args ?? [])], {
+      timeoutMs,
+      label: "Script",
+    });
+  // A status read changes nothing; every other action takes the instance slot.
+  return action === "status" ? run() : slot.run(action, run);
 }
 
   return { getCapabilities, runScript };

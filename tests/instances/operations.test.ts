@@ -269,6 +269,8 @@ describe("getCapabilities (M-13)", () => {
       restore: false,
       modManifest: false,
       variablesFile: false,
+      upgrade: false,
+      prune: false,
     });
   });
 
@@ -284,6 +286,8 @@ describe("getCapabilities (M-13)", () => {
       "misc/status.sh",
       "common/downloaded_versions.json",
       "common/variables.txt",
+      "update/upgrade.sh",
+      "world/prune-chunks.js",
     ]) {
       const p = path.join(cfg.scriptsDir, rel);
       fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -305,6 +309,8 @@ describe("getCapabilities (M-13)", () => {
       restore: true,
       modManifest: true,
       variablesFile: true,
+      upgrade: true,
+      prune: true,
     });
   });
 

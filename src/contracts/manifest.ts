@@ -207,6 +207,45 @@ export const FEATURES: Record<string, FeatureSpec> = {
     routes: ["GET /instances/:id/logs/tail"],
     summary: "Reading the end of the server log.",
   },
+  operations: {
+    version: 1,
+    routes: [
+      "POST /instances/:id/operations/upgrade",
+      "GET /instances/:id/operations/upgrade/current",
+      "GET /instances/:id/operations/upgrade/:jobId",
+    ],
+    summary:
+      "Upgrading the Minecraft version as a background job with phase " +
+      "progress (stop, backup, install, start, fall back), and a single " +
+      "per-instance slot: stop, restart, rollback, backup, restore, mod " +
+      "writes and the upgrade answer 423 while another of them runs. Needs " +
+      "a setup suite with update/upgrade.sh.",
+  },
+  "chunk-prune": {
+    version: 1,
+    routes: [
+      "GET /instances/:id/prune/settings",
+      "PUT /instances/:id/prune/settings",
+      "POST /instances/:id/prune/scans",
+      "GET /instances/:id/prune/scans/:jobId",
+      "GET /instances/:id/prune/plans/:planId/map/:index",
+      "POST /instances/:id/operations/prune",
+    ],
+    summary:
+      "Deleting unused chunks so a new Minecraft version regenerates them: a " +
+      "read-only scan as a background job with per-dimension maps, saved " +
+      "settings, and a prune job (stop, back up, delete, start, restore on " +
+      "failure) polled through the operations routes. Needs a setup suite " +
+      "with world/prune-chunks.js.",
+  },
+  "lifecycle-events": {
+    version: 1,
+    routes: ["GET /instances/:id/events"],
+    summary:
+      "The server's lifecycle events (JVM start and exit, restart " +
+      "scheduled, crash loop gave up), read with a byte-offset cursor. " +
+      "Needs a setup suite whose start.sh writes logs/lifecycle.ndjson.",
+  },
   "log-stream": {
     version: 1,
     routes: ["GET /instances/:id/logs/stream"],

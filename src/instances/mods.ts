@@ -25,6 +25,7 @@ import path from "path";
 
 import { cached } from "../platform/cache.js";
 import { createMutex, mapLimit } from "../platform/concurrency.js";
+import { createOperationSlot, type OperationSlot } from "./operationSlot.js";
 import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
 import {
   COMPAT_MAX_RUNNING_GLOBAL,
@@ -85,7 +86,7 @@ const LOADER_RE = /^[a-z]{1,20}$/;
 /** A Modrinth version id, e.g. "AbCdEfGh". */
 const VERSION_ID_RE = /^[\w-]{1,32}$/;
 
-export function createMods(cfg: InstanceConfig) {
+export function createMods(cfg: InstanceConfig, slot: OperationSlot = createOperationSlot()) {
   const manifestPath = path.join(
     cfg.scriptsDir,
     "common",
@@ -282,7 +283,11 @@ export function createMods(cfg: InstanceConfig) {
     if (which === "check") {
       return runModScriptUnlocked(which, flags, positionals, label);
     }
-    return writeLock.run(() => runModScriptUnlocked(which, flags, positionals, label));
+    // Mod writes share the slot with each other but not with an upgrade, a
+    // restore or a backup, which rewrite the same files.
+    return slot.run("mods", () =>
+      writeLock.run(() => runModScriptUnlocked(which, flags, positionals, label)),
+    );
   }
 
   const modCompat = createModCompat({

@@ -24,6 +24,7 @@ import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { ScriptResult } from "../contracts/wire.js";
 import { RESTORE_SCRIPT } from "./scripts.js";
+import { createOperationSlot, type OperationSlot } from "./operationSlot.js";
 
 /**
  * Ten minutes. A restore unpacks a whole world, and unlike a backup it cannot
@@ -32,7 +33,7 @@ import { RESTORE_SCRIPT } from "./scripts.js";
  */
 const RESTORE_TIMEOUT_MS = 600_000;
 
-export function createRestore(cfg: InstanceConfig) {
+export function createRestore(cfg: InstanceConfig, slot: OperationSlot = createOperationSlot()) {
   async function scriptPath(): Promise<string | null> {
     const target = path.join(cfg.scriptsDir, RESTORE_SCRIPT);
     try {
@@ -60,10 +61,12 @@ export function createRestore(cfg: InstanceConfig) {
     // Shares the spawn dance with the script and mod runners; see
     // platform/spawn.ts. The path here is one the wrapper resolved, never one
     // the client described — the reason restore is not a /scripts/run action.
-    return runAsInstanceUser(cfg, [interpreter("bash"), script, "--file", absPath, "--y"], {
-      timeoutMs: RESTORE_TIMEOUT_MS,
-      label: "Restore",
-    });
+    return slot.run("restore", () =>
+      runAsInstanceUser(cfg, [interpreter("bash"), script, "--file", absPath, "--y"], {
+        timeoutMs: RESTORE_TIMEOUT_MS,
+        label: "Restore",
+      }),
+    );
   }
 
   return { restore, hasRestoreScript: async () => (await scriptPath()) !== null };

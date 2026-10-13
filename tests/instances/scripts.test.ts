@@ -82,3 +82,23 @@ describe("getCapabilities", () => {
     expect(caps.backups).toBe(false);
   });
 });
+
+describe("the instance slot", () => {
+  it("refuses a second mutating action while one is running, but not a status read", async () => {
+    const { createOperationSlot, OperationBusyError } = await import("../../src/instances/operationSlot.js");
+    for (const rel of Object.values(SCRIPT_MAP)) touch(path.join(fx.cfg.scriptsDir, rel));
+    const slot = createOperationSlot();
+    const scripts = createScripts(fx.cfg, slot);
+
+    let finish: (v: unknown) => void = () => {};
+    runMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    const running = scripts.runScript("backup");
+
+    await expect(scripts.runScript("stop")).rejects.toBeInstanceOf(OperationBusyError);
+    await expect(scripts.runScript("status")).resolves.toBeDefined();
+
+    finish({ output: "", stderr: "", exitCode: 0 });
+    await running;
+    await expect(scripts.runScript("stop")).resolves.toBeDefined();
+  });
+});

@@ -12,6 +12,8 @@ import { registerControlRoutes } from "./control.js";
 import { registerInfoRoutes } from "./info.js";
 import { registerLogRoutes } from "./logs.js";
 import { registerModRoutes } from "./mods.js";
+import { registerOperationRoutes } from "./operations.js";
+import { registerPruneRoutes } from "./prune.js";
 import { registerPlayerRoutes } from "./players.js";
 import { registerRuntimeRoutes } from "./runtime.js";
 import { registerStatsRoutes } from "./stats.js";
@@ -58,6 +60,8 @@ export function registerInstanceRoutes(
   registerWorldRoutes(app, resolve);
   registerControlRoutes(app, resolve);
   registerBackupFileRoutes(app, resolve);
+  registerOperationRoutes(app, resolve);
+  registerPruneRoutes(app, resolve);
   registerConfigFileRoutes(app, resolve);
   registerModRoutes(app, resolve);
 }

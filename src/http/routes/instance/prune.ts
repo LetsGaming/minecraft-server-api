@@ -1,0 +1,264 @@
+/**
+ * Chunk pruning routes.
+ *
+ *   chunk-prune  GET/PUT /prune/settings         the saved parameters,
+ *                POST /prune/scans               start a read-only scan (a job),
+ *                GET  /prune/scans/:jobId        poll it,
+ *                GET  /prune/plans/:planId/map/:index  one dimension's map,
+ *                POST /operations/prune          delete what a plan names: a job
+ *                                                that stops the server, backs it
+ *                                                up, deletes, starts it, and
+ *                                                restores the backup on failure.
+ *
+ * Deleting is polled through the upgrade job routes (`/operations/upgrade/...`),
+ * which report any job holding the instance. A scan changes nothing.
+ */
+import type { FastifyInstance } from "fastify";
+
+import {
+  PruneMap,
+  PruneParams,
+  PruneParamsRequest,
+  PruneRequest,
+  PruneScanJob,
+  PruneScanStarted,
+  UpgradeStarted,
+} from "../../../contracts/schemas.js";
+import type { PruneParams as PruneParamsBody } from "../../../contracts/wire.js";
+import { errors, instanceParams } from "../../../contracts/routeSchema.js";
+import { internalError } from "../../errors.js";
+import { PruneBusyError, PruneScriptError, PruneUnavailableError } from "../../../instances/prune.js";
+import { UpgradeUnavailableError, MAX_COUNTDOWN_SECONDS } from "../../../instances/upgrades.js";
+import { PLAN_ID_RE } from "./operations.js";
+import {
+  INSTANCE_PREFIX as P,
+  type InstanceParams,
+  type ResolveInstance,
+} from "./shared.js";
+
+const JOB_ID_RE = /^[a-f0-9-]{36}$/;
+const DIMENSION_RE = /^[a-z0-9_.:-]{1,64}$/;
+const MAX_ZONES = 100;
+const MAX_DIMENSIONS = 32;
+const MAX_COORD = 2_000_000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const coord = (v: unknown): v is number => Number.isInteger(v) && Math.abs(v as number) <= MAX_COORD;
+
+/**
+ * Checks the shape of a parameter body before it becomes a process argument.
+ * Ranges are the script's business (it clamps); this only refuses what is not
+ * the right kind of value. Returns null for a body that is not acceptable.
+ */
+export function parsePruneParams(body: unknown): Partial<PruneParamsBody> | null {
+  if (!isRecord(body)) return null;
+  const out: Partial<PruneParamsBody> = {};
+  for (const key of ["thresholdMinutes", "spawnRadiusChunks", "playerRadiusChunks", "bufferChunks"] as const) {
+    if (body[key] === undefined) continue;
+    if (!finite(body[key]) || (body[key] as number) < 0 || (body[key] as number) > 1_000_000) return null;
+    out[key] = body[key] as number;
+  }
+  if (body.zones !== undefined) {
+    if (!Array.isArray(body.zones) || body.zones.length > MAX_ZONES) return null;
+    const zones = [];
+    for (const z of body.zones) {
+      if (!isRecord(z) || typeof z.dimension !== "string" || !DIMENSION_RE.test(z.dimension)) return null;
+      if (![z.x1, z.z1, z.x2, z.z2].every(coord)) return null;
+      const name = typeof z.name === "string" ? z.name.slice(0, 64) : "";
+      zones.push({ name, dimension: z.dimension, x1: z.x1 as number, z1: z.z1 as number, x2: z.x2 as number, z2: z.z2 as number });
+    }
+    out.zones = zones;
+  }
+  if (body.dimensions !== undefined && body.dimensions !== null) {
+    if (
+      !Array.isArray(body.dimensions) ||
+      body.dimensions.length > MAX_DIMENSIONS ||
+      !body.dimensions.every((d) => typeof d === "string" && DIMENSION_RE.test(d))
+    ) {
+      return null;
+    }
+    out.dimensions = body.dimensions as string[];
+  } else if (body.dimensions === null) {
+    out.dimensions = null;
+  }
+  return out;
+}
+
+export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstance): void {
+  app.get<{ Params: InstanceParams }>(
+    `${P}/prune/settings`,
+    { schema: {
+      summary: "The saved chunk prune parameters",
+      description: "What a scan uses when none are given. Defaults until saved.",
+      tags: ["prune"],
+      params: instanceParams(),
+      response: { 200: PruneParams, ...errors(404, 500, 501) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      try {
+        return await entry.getPruneSettings();
+      } catch (err) {
+        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+        return internalError(reply, `prune/settings ${req.params.id}`, err);
+      }
+    },
+  );
+
+  app.put<{ Params: InstanceParams; Body: unknown }>(
+    `${P}/prune/settings`,
+    { schema: {
+      summary: "Save the chunk prune parameters",
+      description: "Values are clamped to their limits by the setup suite; the reply is what was stored.",
+      tags: ["prune"],
+      params: instanceParams(),
+      requestBody: { required: true, schema: PruneParamsRequest },
+      response: { 200: PruneParams, ...errors(400, 404, 500, 501) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      const params = parsePruneParams(req.body);
+      if (!params) return reply.status(400).send({ error: "Invalid parameters" });
+      try {
+        return await entry.setPruneSettings(params as PruneParamsBody);
+      } catch (err) {
+        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+        return internalError(reply, `prune/settings ${req.params.id}`, err);
+      }
+    },
+  );
+
+  app.post<{ Params: InstanceParams; Body: unknown }>(
+    `${P}/prune/scans`,
+    { schema: {
+      summary: "Scan for unused chunks",
+      description:
+        "Reads every region file and stores a plan; changes nothing and is safe on " +
+        "a running server (the answer is approximate while chunks are being written). " +
+        "Without a body the saved settings are used. One scan runs at a time.",
+      tags: ["prune"],
+      params: instanceParams(),
+      requestBody: { required: false, schema: PruneParamsRequest },
+      response: { 202: PruneScanStarted, ...errors(400, 404, 429, 500, 501) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      let params: Partial<PruneParamsBody> | undefined;
+      if (req.body !== undefined && req.body !== null) {
+        const parsed = parsePruneParams(req.body);
+        if (!parsed) return reply.status(400).send({ error: "Invalid parameters" });
+        params = parsed;
+      }
+      try {
+        const started = await entry.startPruneScan(params as PruneParamsBody | undefined);
+        return reply.status(202).send(started);
+      } catch (err) {
+        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+        if (err instanceof PruneBusyError) return reply.status(429).send({ error: err.message });
+        return internalError(reply, `prune/scans ${req.params.id}`, err);
+      }
+    },
+  );
+
+  app.get<{ Params: InstanceParams & { jobId: string } }>(
+    `${P}/prune/scans/:jobId`,
+    { schema: {
+      summary: "Progress and result of a prune scan",
+      description: "The summary appears once `state` is `done`. The last few scans are kept.",
+      tags: ["prune"],
+      params: instanceParams({ jobId: "Job id from the start request." }),
+      response: { 200: PruneScanJob, ...errors(400, 404) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      if (!JOB_ID_RE.test(req.params.jobId)) return reply.status(400).send({ error: "Invalid job id" });
+      const job = entry.getPruneScan(req.params.jobId);
+      if (!job) return reply.status(404).send({ error: "Unknown or expired scan" });
+      return job;
+    },
+  );
+
+  app.get<{ Params: InstanceParams & { planId: string; index: string } }>(
+    `${P}/prune/plans/:planId/map/:index`,
+    { schema: {
+      summary: "The map of one dimension of a scan",
+      description:
+        "Per region, base64 bytes per chunk: its class (0 empty, 1 would be deleted, " +
+        "2 busy, 3 protected, 4 buffer, 5 unreadable) and a heat level of its " +
+        "inhabited time. `index` is the dimension's position in the summary.",
+      tags: ["prune"],
+      params: instanceParams({ planId: "Plan id from the scan summary.", index: "Dimension index." }),
+      response: { 200: PruneMap, ...errors(400, 404, 500) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      if (!PLAN_ID_RE.test(req.params.planId) || !/^\d{1,3}$/.test(req.params.index)) {
+        return reply.status(400).send({ error: "Invalid plan or dimension" });
+      }
+      try {
+        const text = await entry.readPruneMap(req.params.planId, Number(req.params.index));
+        if (text === null) return reply.status(404).send({ error: "Unknown or expired plan" });
+        // Already JSON text, possibly megabytes: sent as it is, not parsed and re-serialized.
+        return reply.type("application/json").send(text);
+      } catch (err) {
+        if (err instanceof PruneScriptError) return reply.status(500).send({ error: "The map is too large to send" });
+        return internalError(reply, `prune/map ${req.params.id}`, err);
+      }
+    },
+  );
+
+  app.post<{ Params: InstanceParams; Body: { planId?: unknown; countdownSeconds?: unknown } }>(
+    `${P}/operations/prune`,
+    { schema: {
+      summary: "Delete the chunks a scan found",
+      description:
+        "Runs in the background: players are warned, the server is stopped and " +
+        "backed up, the plan is applied (a fresh scan must still agree with at " +
+        "least 90 % of it), and the server is started. If the prune fails or the " +
+        "server does not come up, this job's own backup is restored. Poll it with " +
+        "`GET /operations/upgrade/:jobId`. Refused with 423 while anything else " +
+        "holds the instance.",
+      tags: ["prune"],
+      params: instanceParams(),
+      requestBody: { required: true, schema: PruneRequest },
+      response: { 202: UpgradeStarted, ...errors(400, 404, 423, 500, 501) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      const { planId, countdownSeconds } = req.body ?? {};
+      if (typeof planId !== "string" || !PLAN_ID_RE.test(planId)) {
+        return reply.status(400).send({ error: "Invalid or missing planId" });
+      }
+      if (
+        countdownSeconds !== undefined &&
+        (typeof countdownSeconds !== "number" ||
+          !Number.isInteger(countdownSeconds) ||
+          countdownSeconds < 0 ||
+          countdownSeconds > MAX_COUNTDOWN_SECONDS)
+      ) {
+        return reply.status(400).send({ error: "Invalid countdownSeconds" });
+      }
+      try {
+        const started = await entry.startUpgrade({
+          pruneOnly: true,
+          prunePlan: planId,
+          ...(countdownSeconds !== undefined ? { countdownSeconds: countdownSeconds as number } : {}),
+        });
+        return reply.status(202).send(started);
+      } catch (err) {
+        if (err instanceof UpgradeUnavailableError) return reply.status(501).send({ error: err.message });
+        return internalError(reply, `operations/prune ${req.params.id}`, err);
+      }
+    },
+  );
+}
