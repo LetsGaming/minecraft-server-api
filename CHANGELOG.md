@@ -14,6 +14,11 @@ unchanged.
 
 ## [Unreleased]
 
+### Fixed
+
+- Starting an upgrade no longer fails with a 400 when the compatibility check listed a mod name the wrapper could not look up (for example `sit!`); the list is now only checked for characters that would break the argument.
+- The wrapper writes `api-server.log` in its `logs/` folder (`MC_LOG_DIR` to move it, empty to turn it off), rotated at 5 MB with three files kept. Under systemd the folder stayed empty because everything went to the journal only.
+
 ### Added
 
 - **Version upgrade job.** `POST /instances/:id/operations/upgrade` starts the suite's `update/upgrade.sh` in the background (202 + job id); `GET .../operations/upgrade/:jobId?since=<seq>` and `.../current` report phase progress and the result. After a wrapper restart `current` still reports the outcome from the script's status file, or "interrupted". New feature `operations`; `Capabilities.upgrade` says whether the script exists.

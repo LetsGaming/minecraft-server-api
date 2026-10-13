@@ -32,6 +32,9 @@ import {
 const JOB_ID_RE = /^[a-f0-9-]{36}$/;
 export const PLAN_ID_RE = /^[a-f0-9]{16}$/;
 const MAX_EXPECTED_MODS = 500;
+// Names come back from the compatibility check as it reported them, including ones it could not
+// look up (a mod id like "sit!"), so this only rules out what would break the comma-joined argument.
+const EXPECTED_NAME_RE = /^[^\s,\u0000-\u001f]{1,96}$/;
 
 function sinceOf(raw: unknown): number | null {
   if (raw === undefined) return 0;
@@ -78,7 +81,7 @@ export function registerOperationRoutes(
         if (
           !Array.isArray(expectUnavailable) ||
           expectUnavailable.length > MAX_EXPECTED_MODS ||
-          !expectUnavailable.every((s) => typeof s === "string" && MOD_VALIDATION.SLUG_RE.test(s))
+          !expectUnavailable.every((s) => typeof s === "string" && EXPECTED_NAME_RE.test(s))
         ) {
           return reply.status(400).send({ error: "Invalid expectUnavailable" });
         }

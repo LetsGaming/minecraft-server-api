@@ -53,6 +53,13 @@ describe("POST /operations/upgrade", () => {
     });
   });
 
+  it("accepts a mod name the compatibility check could not look up", async () => {
+    const { app, entry } = build();
+    const res = await post(app, { mcVersion: "1.21.5", expectUnavailable: ["sit!"] });
+    expect(res.statusCode).toBe(202);
+    expect(entry.startUpgrade).toHaveBeenCalledWith({ mcVersion: "1.21.5", expectUnavailable: ["sit!"] });
+  });
+
   it.each([
     {},
     { mcVersion: 5 },
@@ -60,6 +67,7 @@ describe("POST /operations/upgrade", () => {
     { mcVersion: "1.21.5", expectUnavailable: "sodium" },
     { mcVersion: "1.21.5", expectUnavailable: ["bad slug!"] },
     { mcVersion: "1.21.5", expectUnavailable: [1] },
+    { mcVersion: "1.21.5", expectUnavailable: ["a,b"] },
     { mcVersion: "1.21.5", countdownSeconds: -1 },
     { mcVersion: "1.21.5", countdownSeconds: 601 },
     { mcVersion: "1.21.5", countdownSeconds: 1.5 },
