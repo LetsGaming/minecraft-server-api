@@ -139,8 +139,9 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
     };
     jobs.set(job.id, job);
 
+    // A manual selection can outgrow what one argument may hold, so parameters travel on stdin.
     const args = [interpreter("node"), script, "--scan"];
-    if (params) args.push(`--params=${JSON.stringify(params)}`);
+    if (params) args.push("--params-stdin");
 
     let last: Record<string, unknown> | null = null;
     const finish = (state: "done" | "failed", error: string | null): void => {
@@ -154,6 +155,7 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
       const handle = spawnJob(cfg, args, {
         timeoutMs: PRUNE_SCAN_TIMEOUT_MS,
         label: "Prune scan",
+        ...(params ? { input: JSON.stringify(params) } : {}),
         onLine: (line) => {
           try {
             const parsed: unknown = JSON.parse(line);

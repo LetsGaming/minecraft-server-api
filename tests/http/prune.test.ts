@@ -201,3 +201,25 @@ describe("POST /operations/prune", () => {
     expect(res.json()).toMatchObject({ busy: { kind: "backup" } });
   });
 });
+
+describe("parsePruneParams selection", () => {
+  const op = { dimension: "overworld", mode: "add", x1: 0, z1: 0, x2: 4, z2: 4 };
+
+  it("accepts a selection and defaults allowProtected to false", () => {
+    expect(parsePruneParams({ selection: { ops: [op] } })).toEqual({ selection: { ops: [op], allowProtected: false } });
+    expect(parsePruneParams({ selection: { ops: [], allowProtected: true } })).toEqual({ selection: { ops: [], allowProtected: true } });
+  });
+
+  it.each([
+    { selection: "x" },
+    { selection: { ops: "x" } },
+    { selection: { ops: [{ ...op, mode: "xor" }] } },
+    { selection: { ops: [{ ...op, dimension: "Over World" }] } },
+    { selection: { ops: [{ ...op, x2: 0.5 }] } },
+    { selection: { ops: [{ ...op, x2: 9e9 }] } },
+    { selection: { ops: [op], allowProtected: "yes" } },
+    { selection: { ops: new Array(2501).fill(op) } },
+  ])("refuses %j", (body) => {
+    expect(parsePruneParams(body)).toBeNull();
+  });
+});

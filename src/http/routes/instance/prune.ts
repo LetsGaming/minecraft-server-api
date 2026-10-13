@@ -47,6 +47,7 @@ const DIMENSION_RE = /^[a-z0-9_.:-]{1,64}$/;
 const MAX_ZONES = 100;
 const MAX_DIMENSIONS = 32;
 const MAX_COORD = 2_000_000;
+const MAX_SELECTION_OPS = 2500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -90,6 +91,19 @@ export function parsePruneParams(body: unknown): Partial<PruneParamsBody> | null
     out.dimensions = body.dimensions as string[];
   } else if (body.dimensions === null) {
     out.dimensions = null;
+  }
+  if (body.selection !== undefined) {
+    const sel = body.selection;
+    if (!isRecord(sel) || !Array.isArray(sel.ops) || sel.ops.length > MAX_SELECTION_OPS) return null;
+    if (sel.allowProtected !== undefined && typeof sel.allowProtected !== "boolean") return null;
+    const ops = [];
+    for (const op of sel.ops) {
+      if (!isRecord(op) || typeof op.dimension !== "string" || !DIMENSION_RE.test(op.dimension)) return null;
+      if (op.mode !== "add" && op.mode !== "remove") return null;
+      if (![op.x1, op.z1, op.x2, op.z2].every(coord)) return null;
+      ops.push({ dimension: op.dimension, mode: op.mode as "add" | "remove", x1: op.x1 as number, z1: op.z1 as number, x2: op.x2 as number, z2: op.z2 as number });
+    }
+    out.selection = { ops, allowProtected: sel.allowProtected === true };
   }
   return out;
 }

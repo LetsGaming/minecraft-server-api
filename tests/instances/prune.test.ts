@@ -28,11 +28,13 @@ const SUMMARY = {
 function fakeSpawn() {
   let cancelled = 0;
   const calls: string[][] = [];
+  const inputs: Array<string | undefined> = [];
   let emit: (line: string) => void = () => {};
   let finish: (code: number | null) => void = () => {};
   let fail: (e: Error) => void = () => {};
-  const spawnJob = (_cfg: unknown, command: string[], opts: { onLine: (l: string) => void }) => {
+  const spawnJob = (_cfg: unknown, command: string[], opts: { onLine: (l: string) => void; input?: string }) => {
     calls.push(command);
+    inputs.push(opts.input);
     emit = opts.onLine;
     return {
       done: new Promise<{ exitCode: number | null; stderr: string }>((resolve, reject) => {
@@ -45,7 +47,7 @@ function fakeSpawn() {
       },
     };
   };
-  return { spawnJob, calls, cancelCount: () => cancelled, line: (o: object) => emit(JSON.stringify(o)), end: (c: number | null) => finish(c), crash: (e: Error) => fail(e) };
+  return { spawnJob, calls, inputs, cancelCount: () => cancelled, line: (o: object) => emit(JSON.stringify(o)), end: (c: number | null) => finish(c), crash: (e: Error) => fail(e) };
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -112,10 +114,12 @@ describe("a prune scan", () => {
   it("runs the script with the parameters and ends with the summary", async () => {
     const { prune, spawn } = setup();
     const { jobId } = await prune.startPruneScan({ ...SUMMARY.params, thresholdMinutes: 12 });
-    const [, script, scan, params] = spawn.calls[0]!;
+    const [, script, scan, flag] = spawn.calls[0]!;
     expect(script).toBe(path.join(fx.cfg.scriptsDir, PRUNE_SCRIPT));
     expect(scan).toBe("--scan");
-    expect(JSON.parse(params!.replace("--params=", "")).thresholdMinutes).toBe(12);
+    // Parameters travel on stdin: a manual selection can outgrow one argument.
+    expect(flag).toBe("--params-stdin");
+    expect(JSON.parse(spawn.inputs[0]!).thresholdMinutes).toBe(12);
 
     expect(prune.getPruneScan(jobId)).toMatchObject({ state: "running" });
     spawn.line(SUMMARY);
@@ -128,6 +132,7 @@ describe("a prune scan", () => {
     const { prune, spawn } = setup();
     await prune.startPruneScan();
     expect(spawn.calls[0]).not.toContainEqual(expect.stringContaining("--params"));
+    expect(spawn.inputs[0]).toBeUndefined();
   });
 
   it("allows one scan at a time", async () => {

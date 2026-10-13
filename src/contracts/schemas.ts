@@ -706,6 +706,38 @@ const PruneZone = named(
   }),
 );
 
+const PruneSelectionOp = named(
+  "PruneSelectionOp",
+  object({
+    dimension: string,
+    mode: { type: "string", enum: ["add", "remove"] },
+    x1: integer,
+    z1: integer,
+    x2: integer,
+    z2: integer,
+  }),
+);
+
+const PruneSelection = named(
+  "PruneSelection",
+  object(
+    {
+      ops: {
+        ...array(PruneSelectionOp),
+        description:
+          "Rectangles in chunk coordinates, inclusive, applied in order: add chooses chunks, " +
+          "remove takes them out again. Chosen chunks are deleted even where a soft rule " +
+          "(in use, buffer) would keep them. Unreadable chunks are never deleted.",
+      },
+      allowProtected: {
+        type: "boolean",
+        description: "Also let the selection override spawn, player areas and drawn zones.",
+      },
+    },
+    { required: ["ops", "allowProtected"] },
+  ),
+);
+
 export const PruneParams = named(
   "PruneParams",
   object(
@@ -720,6 +752,7 @@ export const PruneParams = named(
         nullable: true,
         description: "Dimension ids to scan; null means every one found.",
       },
+      selection: PruneSelection,
     },
     { required: ["thresholdMinutes", "spawnRadiusChunks", "playerRadiusChunks", "bufferChunks", "zones", "dimensions"] },
   ),
@@ -736,6 +769,7 @@ export const PruneParamsRequest = named(
       bufferChunks: integer,
       zones: array(PruneZone),
       dimensions: { ...array(string), nullable: true },
+      selection: PruneSelection,
     },
     { required: [] },
   ),
@@ -743,18 +777,26 @@ export const PruneParamsRequest = named(
 
 const PruneDimensionSummary = named(
   "PruneDimensionSummary",
-  object({
-    id: string,
-    regions: integer,
-    chunks: integer,
-    delete: integer,
-    active: integer,
-    protected: integer,
-    buffer: integer,
-    unreadable: integer,
-    regionsEmptied: integer,
-    bytes: integer,
-  }),
+  object(
+    {
+      id: string,
+      regions: integer,
+      chunks: integer,
+      delete: { ...integer, description: "Everything that would go: what the rules found plus what was chosen by hand." },
+      active: integer,
+      protected: integer,
+      buffer: integer,
+      unreadable: integer,
+      manualSoft: { ...integer, description: "Chosen by hand over a soft rule (in use, buffer); part of delete." },
+      manualHard: { ...integer, description: "Chosen by hand over a hard protection; part of delete." },
+      manualBlocked: { ...integer, description: "Chosen by hand but kept: unreadable, or protected without the override." },
+      regionsEmptied: integer,
+      bytes: integer,
+    },
+    {
+      required: ["id", "regions", "chunks", "delete", "active", "protected", "buffer", "unreadable", "regionsEmptied", "bytes"],
+    },
+  ),
 );
 
 export const PruneSummary = named(

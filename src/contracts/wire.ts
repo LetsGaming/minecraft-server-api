@@ -376,6 +376,21 @@ export interface PruneParams {
   zones: PruneZone[];
   /** Dimension ids to scan; null means every one found. */
   dimensions: string[] | null;
+  selection?: PruneSelection;
+}
+
+export interface PruneSelectionOp {
+  dimension: string;
+  mode: "add" | "remove";
+  x1: number;
+  z1: number;
+  x2: number;
+  z2: number;
+}
+
+export interface PruneSelection {
+  ops: PruneSelectionOp[];
+  allowProtected: boolean;
 }
 
 export interface PruneDimensionSummary {
@@ -387,6 +402,9 @@ export interface PruneDimensionSummary {
   protected: number;
   buffer: number;
   unreadable: number;
+  manualSoft?: number;
+  manualHard?: number;
+  manualBlocked?: number;
   regionsEmptied: number;
   bytes: number;
 }

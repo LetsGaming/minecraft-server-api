@@ -228,6 +228,8 @@ export interface JobSpawnOptions {
   label: string;
   /** Called for every complete stdout line, as it arrives. */
   onLine: (line: string) => void;
+  /** Written to the process's stdin, which is then closed. For input too large for an argument. */
+  input?: string;
 }
 
 export interface JobSpawnHandle {
@@ -256,9 +258,12 @@ export function spawnJobAsInstanceUser(
     const child = spawn("sudo", ["-n", "-u", target.linuxUser, ...command], {
       cwd: target.scriptsDir,
       env: childEnv(target.linuxUser),
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       detached: true,
     });
+    // Closed at once when there is nothing to send, so the job never waits on input.
+    child.stdin.on("error", () => undefined); // the script may exit before it reads everything
+    child.stdin.end(opts.input ?? "");
 
     let pending = "";
     let stderr = "";

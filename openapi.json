@@ -6131,7 +6131,8 @@
             "type": "integer"
           },
           "delete": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Everything that would go: what the rules found plus what was chosen by hand."
           },
           "active": {
             "type": "integer"
@@ -6144,6 +6145,18 @@
           },
           "unreadable": {
             "type": "integer"
+          },
+          "manualSoft": {
+            "type": "integer",
+            "description": "Chosen by hand over a soft rule (in use, buffer); part of delete."
+          },
+          "manualHard": {
+            "type": "integer",
+            "description": "Chosen by hand over a hard protection; part of delete."
+          },
+          "manualBlocked": {
+            "type": "integer",
+            "description": "Chosen by hand but kept: unreadable, or protected without the override."
           },
           "regionsEmptied": {
             "type": "integer"
@@ -6258,6 +6271,9 @@
             },
             "nullable": true,
             "description": "Dimension ids to scan; null means every one found."
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PruneSelection"
           }
         },
         "required": [
@@ -6297,6 +6313,9 @@
               "type": "string"
             },
             "nullable": true
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PruneSelection"
           }
         },
         "additionalProperties": false
@@ -6388,6 +6407,63 @@
         },
         "required": [
           "jobId"
+        ],
+        "additionalProperties": false
+      },
+      "PruneSelection": {
+        "type": "object",
+        "properties": {
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PruneSelectionOp"
+            },
+            "description": "Rectangles in chunk coordinates, inclusive, applied in order: add chooses chunks, remove takes them out again. Chosen chunks are deleted even where a soft rule (in use, buffer) would keep them. Unreadable chunks are never deleted."
+          },
+          "allowProtected": {
+            "type": "boolean",
+            "description": "Also let the selection override spawn, player areas and drawn zones."
+          }
+        },
+        "required": [
+          "ops",
+          "allowProtected"
+        ],
+        "additionalProperties": false
+      },
+      "PruneSelectionOp": {
+        "type": "object",
+        "properties": {
+          "dimension": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "add",
+              "remove"
+            ]
+          },
+          "x1": {
+            "type": "integer"
+          },
+          "z1": {
+            "type": "integer"
+          },
+          "x2": {
+            "type": "integer"
+          },
+          "z2": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dimension",
+          "mode",
+          "x1",
+          "z1",
+          "x2",
+          "z2"
         ],
         "additionalProperties": false
       },
