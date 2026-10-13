@@ -10,6 +10,7 @@ import { registerPruneRoutes, parsePruneParams } from "../../src/http/routes/ins
 import type { InstanceEntry } from "../../src/http/routes/instance/shared.js";
 import { PruneBusyError, PruneScriptError, PruneUnavailableError } from "../../src/instances/prune.js";
 import { OperationBusyError } from "../../src/instances/operationSlot.js";
+import { PrunePlanMissingError } from "../../src/instances/upgrades.js";
 
 const JOB = "6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f";
 const PLAN = "0123456789abcdef";
@@ -21,6 +22,10 @@ function build(overrides: Record<string, unknown> = {}) {
     setPruneSettings: vi.fn(async (p: unknown) => ({ ...PARAMS, ...(p as object) })),
     startPruneScan: vi.fn(async () => ({ jobId: JOB })),
     getPruneScan: vi.fn(() => ({ jobId: JOB, state: "running" })),
+    getPruneDimensions: vi.fn(async () => ({ dimensions: [{ id: "overworld", regions: 4 }] })),
+    getPruneStatus: vi.fn(async () => ({ engine: "builtin", version: 1 })),
+    inspectPruneChunk: vi.fn(async () => ({ chunk: { dimension: "overworld", cx: 1, cz: 2, rx: 0, rz: 0, slot: 65 }, thresholdMinutes: 5, present: true, readable: true, blockEntities: [{ id: "minecraft:chest", count: 2 }], protectedBy: [{ kind: "zone", name: "base" }] })),
+    cancelPruneScan: vi.fn(() => true),
     readPruneMap: vi.fn(async () => '{"dimension":"overworld","regions":{"r.0.0":{"cell":"AA==","heat":"AA=="}}}'),
     startUpgrade: vi.fn(async () => ({ jobId: JOB })),
     ...overrides,
@@ -135,6 +140,51 @@ describe("maps", () => {
   });
 });
 
+describe("dimensions, status and cancel", () => {
+  it("lists the dimensions", async () => {
+    const { app } = build();
+    const res = await app.inject({ url: url("/prune/dimensions") });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ dimensions: [{ id: "overworld", regions: 4 }] });
+  });
+
+  it("reports the engine status", async () => {
+    const { app } = build();
+    expect((await app.inject({ url: url("/prune/status") })).json()).toEqual({ engine: "builtin", version: 1 });
+  });
+
+  it("cancels a scan, 404s one that is not running, 400s a bad id", async () => {
+    const { app, entry } = build();
+    const ok = await app.inject({ method: "POST", url: url(`/prune/scans/${JOB}/cancel`) });
+    expect(ok.json()).toEqual({ cancelled: true });
+    expect(entry.cancelPruneScan).toHaveBeenCalledWith(JOB);
+    const gone = build({ cancelPruneScan: vi.fn(() => false) });
+    expect((await gone.app.inject({ method: "POST", url: url(`/prune/scans/${JOB}/cancel`) })).statusCode).toBe(404);
+    expect((await app.inject({ method: "POST", url: url("/prune/scans/x/cancel") })).statusCode).toBe(400);
+  });
+
+  it("describes one chunk, and 404s a plan that is gone", async () => {
+    const { app, entry } = build();
+    const res = await app.inject({ url: url(`/prune/plans/${PLAN}/chunk?dimension=overworld&cx=1&cz=2`) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ present: true, blockEntities: [{ id: "minecraft:chest", count: 2 }], protectedBy: [{ kind: "zone", name: "base" }] });
+    expect(entry.inspectPruneChunk).toHaveBeenCalledWith(PLAN, "overworld", 1, 2);
+    const gone = build({ inspectPruneChunk: vi.fn(async () => null) });
+    expect((await gone.app.inject({ url: url(`/prune/plans/${PLAN}/chunk?dimension=overworld&cx=1&cz=2`) })).statusCode).toBe(404);
+  });
+
+  it.each(["dimension=overworld&cx=a&cz=2", "dimension=Over World&cx=1&cz=2", "cx=1&cz=2", "dimension=overworld&cx=1.5&cz=2", "dimension=overworld&cx=9999999999&cz=2"])("400s a bad chunk request: %s", async (query) => {
+    const { app, entry } = build();
+    expect((await app.inject({ url: url(`/prune/plans/${PLAN}/chunk?${query}`) })).statusCode).toBe(400);
+    expect(entry.inspectPruneChunk).not.toHaveBeenCalled();
+  });
+
+  it("501s when the suite has no prune script", async () => {
+    const { app } = build({ getPruneDimensions: vi.fn(async () => { throw new PruneUnavailableError(); }) });
+    expect((await app.inject({ url: url("/prune/dimensions") })).statusCode).toBe(501);
+  });
+});
+
 describe("POST /operations/prune", () => {
   const post = (app: ReturnType<typeof build>["app"], payload: unknown) =>
     app.inject({ method: "POST", url: url("/operations/prune"), payload: payload as object });
@@ -156,10 +206,46 @@ describe("POST /operations/prune", () => {
     },
   );
 
+  it("404s a plan that no longer exists", async () => {
+    const { app } = build({ startUpgrade: vi.fn(async () => { throw new PrunePlanMissingError(); }) });
+    expect((await post(app, { planId: PLAN })).statusCode).toBe(404);
+  });
+
   it("423s while something else holds the instance", async () => {
     const { app } = build({ startUpgrade: vi.fn(async () => { throw new OperationBusyError({ kind: "backup" }); }) });
     const res = await post(app, { planId: PLAN });
     expect(res.statusCode).toBe(423);
     expect(res.json()).toMatchObject({ busy: { kind: "backup" } });
+  });
+});
+
+describe("parsePruneParams build protection", () => {
+  it("accepts off and likely only", () => {
+    expect(parsePruneParams({ buildProtection: "off" })).toEqual({ buildProtection: "off" });
+    expect(parsePruneParams({ buildProtection: "likely" })).toEqual({ buildProtection: "likely" });
+    expect(parsePruneParams({ buildProtection: "always" })).toBeNull();
+    expect(parsePruneParams({ buildProtection: true })).toBeNull();
+  });
+});
+
+describe("parsePruneParams selection", () => {
+  const op = { dimension: "overworld", mode: "add", x1: 0, z1: 0, x2: 4, z2: 4 };
+
+  it("accepts a selection and defaults allowProtected to false", () => {
+    expect(parsePruneParams({ selection: { ops: [op] } })).toEqual({ selection: { ops: [op], allowProtected: false } });
+    expect(parsePruneParams({ selection: { ops: [], allowProtected: true } })).toEqual({ selection: { ops: [], allowProtected: true } });
+  });
+
+  it.each([
+    { selection: "x" },
+    { selection: { ops: "x" } },
+    { selection: { ops: [{ ...op, mode: "xor" }] } },
+    { selection: { ops: [{ ...op, dimension: "Over World" }] } },
+    { selection: { ops: [{ ...op, x2: 0.5 }] } },
+    { selection: { ops: [{ ...op, x2: 9e9 }] } },
+    { selection: { ops: [op], allowProtected: "yes" } },
+    { selection: { ops: new Array(2501).fill(op) } },
+  ])("refuses %j", (body) => {
+    expect(parsePruneParams(body)).toBeNull();
   });
 });

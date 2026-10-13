@@ -222,18 +222,23 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "a setup suite with update/upgrade.sh.",
   },
   "chunk-prune": {
-    version: 1,
+    version: 2,
     routes: [
       "GET /instances/:id/prune/settings",
       "PUT /instances/:id/prune/settings",
+      "GET /instances/:id/prune/dimensions",
+      "GET /instances/:id/prune/status",
+      "GET /instances/:id/prune/plans/:planId/chunk",
       "POST /instances/:id/prune/scans",
       "GET /instances/:id/prune/scans/:jobId",
+      "POST /instances/:id/prune/scans/:jobId/cancel",
       "GET /instances/:id/prune/plans/:planId/map/:index",
       "POST /instances/:id/operations/prune",
     ],
     summary:
       "Deleting unused chunks so a new Minecraft version regenerates them: a " +
-      "read-only scan as a background job with per-dimension maps, saved " +
+      "read-only scan as a background job with progress, cancel, a choice of " +
+      "dimensions and per-dimension maps, saved " +
       "settings, and a prune job (stop, back up, delete, start, restore on " +
       "failure) polled through the operations routes. Needs a setup suite " +
       "with world/prune-chunks.js.",

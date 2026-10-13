@@ -26,21 +26,28 @@ const SUMMARY = {
 };
 
 function fakeSpawn() {
+  let cancelled = 0;
   const calls: string[][] = [];
+  const inputs: Array<string | undefined> = [];
   let emit: (line: string) => void = () => {};
   let finish: (code: number | null) => void = () => {};
   let fail: (e: Error) => void = () => {};
-  const spawnJob = (_cfg: unknown, command: string[], opts: { onLine: (l: string) => void }) => {
+  const spawnJob = (_cfg: unknown, command: string[], opts: { onLine: (l: string) => void; input?: string }) => {
     calls.push(command);
+    inputs.push(opts.input);
     emit = opts.onLine;
     return {
       done: new Promise<{ exitCode: number | null; stderr: string }>((resolve, reject) => {
         finish = (c) => resolve({ exitCode: c, stderr: "" });
         fail = reject;
       }),
+      cancel: () => {
+        cancelled++;
+        finish(null);
+      },
     };
   };
-  return { spawnJob, calls, line: (o: object) => emit(JSON.stringify(o)), end: (c: number | null) => finish(c), crash: (e: Error) => fail(e) };
+  return { spawnJob, calls, inputs, cancelCount: () => cancelled, line: (o: object) => emit(JSON.stringify(o)), end: (c: number | null) => finish(c), crash: (e: Error) => fail(e) };
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -59,14 +66,70 @@ function setup(withScript = true) {
   return { prune, spawn, runCalls, setRunOutput: (o: string) => (runOutput = o) };
 }
 
+describe("scan progress, cancel, dimensions and status", () => {
+  it("reports the latest progress line while a scan runs", async () => {
+    const { prune, spawn } = setup();
+    const { jobId } = await prune.startPruneScan();
+    spawn.line({ phase: "scan", done: 3, total: 10, chunks: 3000, chunksPerSecond: 900, etaSeconds: 8 });
+    spawn.line({ phase: "scan", done: 5, total: 10, chunks: 5000, chunksPerSecond: 950, etaSeconds: 5 });
+    spawn.line({ phase: "scan", done: "x", total: 10 });
+    expect(prune.getPruneScan(jobId)).toMatchObject({
+      state: "running",
+      progress: { done: 5, total: 10, chunks: 5000, chunksPerSecond: 950, etaSeconds: 5 },
+    });
+  });
+
+  it("cancels a running scan, which then reports cancelled", async () => {
+    const { prune, spawn } = setup();
+    const { jobId } = await prune.startPruneScan();
+    expect(prune.cancelPruneScan(jobId)).toBe(true);
+    await flush();
+    expect(spawn.cancelCount()).toBe(1);
+    expect(prune.getPruneScan(jobId)).toMatchObject({ state: "failed", error: "cancelled" });
+    expect(prune.cancelPruneScan(jobId)).toBe(false);
+    expect(prune.cancelPruneScan("nope")).toBe(false);
+  });
+
+  it("lists the dimensions and drops malformed entries", async () => {
+    const { prune, setRunOutput, runCalls } = setup();
+    setRunOutput(JSON.stringify({ ok: true, dimensions: [{ id: "overworld", regions: 3 }, { id: 5 }, "x"] }));
+    expect(await prune.getPruneDimensions()).toEqual({ dimensions: [{ id: "overworld", regions: 3 }] });
+    expect(runCalls[0]).toContain("--dimensions");
+  });
+
+  it("inspects one chunk of a plan through the script", async () => {
+    const { prune, setRunOutput, runCalls } = setup();
+    setRunOutput(JSON.stringify({ ok: true, chunk: { dimension: "overworld", cx: -3, cz: 4, rx: -1, rz: 0, slot: 133 }, thresholdMinutes: 5, present: true, readable: true, plannedForDeletion: true }));
+    const info = await prune.inspectPruneChunk("0123456789abcdef", "overworld", -3, 4);
+    expect(info).toMatchObject({ present: true, plannedForDeletion: true });
+    expect(runCalls[0]).toEqual(expect.arrayContaining(["--inspect", "--plan=0123456789abcdef", "--dimension=overworld", "--cx=-3", "--cz=4"]));
+    setRunOutput(JSON.stringify({ ok: false, code: "plan_missing" }));
+    expect(await prune.inspectPruneChunk("0123456789abcdef", "overworld", 0, 0)).toBeNull();
+  });
+
+  it("reports an unfinished delete from the status", async () => {
+    const { prune, setRunOutput } = setup();
+    setRunOutput(JSON.stringify({ ok: true, engine: "builtin", version: 1, unfinishedApply: { state: "applying", plan: "0123456789abcdef", startedAt: "2026-10-13T10:00:00Z", pid: 4 } }));
+    expect(await prune.getPruneStatus()).toEqual({
+      engine: "builtin",
+      version: 1,
+      unfinishedApply: { state: "applying", plan: "0123456789abcdef", startedAt: "2026-10-13T10:00:00Z" },
+    });
+    setRunOutput(JSON.stringify({ ok: true, engine: "builtin", version: 1 }));
+    expect(await prune.getPruneStatus()).toEqual({ engine: "builtin", version: 1 });
+  });
+});
+
 describe("a prune scan", () => {
   it("runs the script with the parameters and ends with the summary", async () => {
     const { prune, spawn } = setup();
     const { jobId } = await prune.startPruneScan({ ...SUMMARY.params, thresholdMinutes: 12 });
-    const [, script, scan, params] = spawn.calls[0]!;
+    const [, script, scan, flag] = spawn.calls[0]!;
     expect(script).toBe(path.join(fx.cfg.scriptsDir, PRUNE_SCRIPT));
     expect(scan).toBe("--scan");
-    expect(JSON.parse(params!.replace("--params=", "")).thresholdMinutes).toBe(12);
+    // Parameters travel on stdin: a manual selection can outgrow one argument.
+    expect(flag).toBe("--params-stdin");
+    expect(JSON.parse(spawn.inputs[0]!).thresholdMinutes).toBe(12);
 
     expect(prune.getPruneScan(jobId)).toMatchObject({ state: "running" });
     spawn.line(SUMMARY);
@@ -79,6 +142,7 @@ describe("a prune scan", () => {
     const { prune, spawn } = setup();
     await prune.startPruneScan();
     expect(spawn.calls[0]).not.toContainEqual(expect.stringContaining("--params"));
+    expect(spawn.inputs[0]).toBeUndefined();
   });
 
   it("allows one scan at a time", async () => {

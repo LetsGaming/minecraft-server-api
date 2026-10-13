@@ -3080,6 +3080,218 @@
         }
       }
     },
+    "/instances/{id}/prune/dimensions": {
+      "get": {
+        "operationId": "getInstancesByIdPruneDimensions",
+        "summary": "The dimensions of the world",
+        "description": "Names and region-file counts, from directory listings only (no chunk is read), so a client can offer a choice before scanning. A scan limited to chosen dimensions reads only those.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneDimensions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/prune/plans/{planId}/chunk": {
+      "get": {
+        "operationId": "getInstancesByIdPrunePlansByPlanIdChunk",
+        "summary": "One chunk of a plan, in full",
+        "description": "Reads the chunk now and reports what it contains (block entities, structures), how long players were near it, how much space it takes, whether the plan deletes it and which protections cover it. For the map's inspector; the map itself stays light.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "planId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Plan id from the scan summary."
+          },
+          {
+            "name": "dimension",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Dimension id from the summary."
+          },
+          {
+            "name": "cx",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Chunk x coordinate."
+          },
+          {
+            "name": "cz",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Chunk z coordinate."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneChunkInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/instances/{id}/prune/plans/{planId}/map/{index}": {
       "get": {
         "operationId": "getInstancesByIdPrunePlansByPlanIdMapByIndex",
@@ -3366,6 +3578,88 @@
         }
       }
     },
+    "/instances/{id}/prune/scans/{jobId}/cancel": {
+      "post": {
+        "operationId": "postInstancesByIdPruneScansByJobIdCancel",
+        "summary": "Stop a running scan",
+        "description": "A scan only reads, so stopping it is safe; what it already read stays cached for the next scan. The job then reports `failed` with error `cancelled`.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Job id from the start request."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneCancelled"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/instances/{id}/prune/settings": {
       "get": {
         "operationId": "getInstancesByIdPruneSettings",
@@ -3493,6 +3787,89 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/prune/status": {
+      "get": {
+        "operationId": "getInstancesByIdPruneStatus",
+        "summary": "The prune engine's status",
+        "description": "The engine version, and `unfinishedApply` when a delete started and never finished (the world may be half pruned; restore the job's backup).",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneEngineStatus"
                 }
               }
             }
@@ -5830,6 +6207,211 @@
         ],
         "additionalProperties": false
       },
+      "PruneCancelled": {
+        "type": "object",
+        "properties": {
+          "cancelled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cancelled"
+        ],
+        "additionalProperties": false
+      },
+      "PruneChunkInfo": {
+        "type": "object",
+        "properties": {
+          "chunk": {
+            "type": "object",
+            "properties": {
+              "dimension": {
+                "type": "string"
+              },
+              "cx": {
+                "type": "integer"
+              },
+              "cz": {
+                "type": "integer"
+              },
+              "rx": {
+                "type": "integer"
+              },
+              "rz": {
+                "type": "integer"
+              },
+              "slot": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "dimension",
+              "cx",
+              "cz",
+              "rx",
+              "rz",
+              "slot"
+            ],
+            "additionalProperties": false
+          },
+          "thresholdMinutes": {
+            "type": "number"
+          },
+          "present": {
+            "type": "boolean",
+            "description": "Whether the world has this chunk at all."
+          },
+          "readable": {
+            "type": "boolean",
+            "description": "False when the chunk exists but cannot be read; it is then never deleted."
+          },
+          "unreadableReason": {
+            "type": "string"
+          },
+          "plannedForDeletion": {
+            "type": "boolean",
+            "description": "Whether this plan deletes the chunk."
+          },
+          "bytes": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "integer"
+              },
+              "entities": {
+                "type": "integer"
+              },
+              "poi": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "region",
+              "entities",
+              "poi"
+            ],
+            "additionalProperties": false
+          },
+          "dataVersion": {
+            "type": "integer",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastUpdate": {
+            "type": "integer",
+            "nullable": true
+          },
+          "inhabitedTicks": {
+            "type": "number",
+            "nullable": true
+          },
+          "inhabitedMinutes": {
+            "type": "number",
+            "nullable": true
+          },
+          "blockEntities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "count"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "structureStarts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "structureReferences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unexplained": {
+            "type": "boolean",
+            "description": "Block entities that no structure or spawner explains."
+          },
+          "protectedBy": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "spawn",
+                    "player",
+                    "zone"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "chunk",
+          "thresholdMinutes",
+          "present"
+        ],
+        "additionalProperties": false
+      },
+      "PruneDimensions": {
+        "type": "object",
+        "properties": {
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "regions": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "regions"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "dimensions"
+        ],
+        "additionalProperties": false
+      },
       "PruneDimensionSummary": {
         "type": "object",
         "properties": {
@@ -5843,7 +6425,8 @@
             "type": "integer"
           },
           "delete": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Everything that would go: what the rules found plus what was chosen by hand."
           },
           "active": {
             "type": "integer"
@@ -5856,6 +6439,22 @@
           },
           "unreadable": {
             "type": "integer"
+          },
+          "uncertain": {
+            "type": "integer",
+            "description": "Kept by build protection: the rules would delete them but they hold things a structure does not explain."
+          },
+          "manualSoft": {
+            "type": "integer",
+            "description": "Chosen by hand over a soft rule (in use, buffer); part of delete."
+          },
+          "manualHard": {
+            "type": "integer",
+            "description": "Chosen by hand over a hard protection; part of delete."
+          },
+          "manualBlocked": {
+            "type": "integer",
+            "description": "Chosen by hand but kept: unreadable, or protected without the override."
           },
           "regionsEmptied": {
             "type": "integer"
@@ -5875,6 +6474,46 @@
           "unreadable",
           "regionsEmptied",
           "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "PruneEngineStatus": {
+        "type": "object",
+        "properties": {
+          "engine": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "unfinishedApply": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "applying",
+                  "failed"
+                ]
+              },
+              "plan": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "plan",
+              "startedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "engine",
+          "version"
         ],
         "additionalProperties": false
       },
@@ -5930,6 +6569,17 @@
             },
             "nullable": true,
             "description": "Dimension ids to scan; null means every one found."
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PruneSelection"
+          },
+          "buildProtection": {
+            "type": "string",
+            "enum": [
+              "off",
+              "likely"
+            ],
+            "description": "likely: keep chunks the rules would delete when they hold block entities no structure explains (chests, signs, furnaces, beds, redstone parts, modded blocks). off: ignore what chunks contain."
           }
         },
         "required": [
@@ -5969,6 +6619,16 @@
               "type": "string"
             },
             "nullable": true
+          },
+          "selection": {
+            "$ref": "#/components/schemas/PruneSelection"
+          },
+          "buildProtection": {
+            "type": "string",
+            "enum": [
+              "off",
+              "likely"
+            ]
           }
         },
         "additionalProperties": false
@@ -6009,12 +6669,44 @@
           },
           "error": {
             "type": "string",
-            "description": "A fixed reason code when the scan failed."
+            "description": "A fixed reason code when the scan failed (`cancelled` when it was stopped)."
+          },
+          "progress": {
+            "$ref": "#/components/schemas/PruneScanProgress"
           }
         },
         "required": [
           "jobId",
           "state"
+        ],
+        "additionalProperties": false
+      },
+      "PruneScanProgress": {
+        "type": "object",
+        "properties": {
+          "done": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "chunks": {
+            "type": "integer"
+          },
+          "chunksPerSecond": {
+            "type": "integer"
+          },
+          "etaSeconds": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "done",
+          "total",
+          "chunks",
+          "chunksPerSecond",
+          "etaSeconds"
         ],
         "additionalProperties": false
       },
@@ -6028,6 +6720,63 @@
         },
         "required": [
           "jobId"
+        ],
+        "additionalProperties": false
+      },
+      "PruneSelection": {
+        "type": "object",
+        "properties": {
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PruneSelectionOp"
+            },
+            "description": "Rectangles in chunk coordinates, inclusive, applied in order: add chooses chunks, remove takes them out again. Chosen chunks are deleted even where a soft rule (in use, buffer) would keep them. Unreadable chunks are never deleted."
+          },
+          "allowProtected": {
+            "type": "boolean",
+            "description": "Also let the selection override spawn, player areas and drawn zones."
+          }
+        },
+        "required": [
+          "ops",
+          "allowProtected"
+        ],
+        "additionalProperties": false
+      },
+      "PruneSelectionOp": {
+        "type": "object",
+        "properties": {
+          "dimension": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "add",
+              "remove"
+            ]
+          },
+          "x1": {
+            "type": "integer"
+          },
+          "z1": {
+            "type": "integer"
+          },
+          "x2": {
+            "type": "integer"
+          },
+          "z2": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dimension",
+          "mode",
+          "x1",
+          "z1",
+          "x2",
+          "z2"
         ],
         "additionalProperties": false
       },

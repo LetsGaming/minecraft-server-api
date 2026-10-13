@@ -22,10 +22,17 @@ unchanged.
 
 - **Chunk pruning.** `POST /instances/:id/prune/scans` starts a read-only scan of unused chunks as a background job (`GET .../prune/scans/:jobId` polls it); `GET .../prune/plans/:planId/map/:index` returns one dimension's map for drawing; `GET/PUT .../prune/settings` keeps the parameters; `POST .../operations/prune` deletes what a plan names as a job that stops the server, backs it up, deletes, starts it and restores the backup on failure (polled through the upgrade job routes). New feature `chunk-prune`; `Capabilities.prune` says whether `world/prune-chunks.js` exists. `POST /operations/upgrade` accepts `prunePlan` to prune inside an upgrade under its single backup.
 - Upgrade jobs report `kind` (`upgrade` or `prune`).
+- **Build protection and chunk inspection.** The scan body (and each plan's `params`) accepts `buildProtection` (`off` or `likely`, default likely: the script keeps chunks with block entities no structure explains); per dimension the summary reports `uncertain`. `GET .../prune/plans/:planId/chunk?dimension=&cx=&cz=` reads one chunk in full: status, time in use, size, block entities, structures, whether the plan deletes it and which protections cover it.
+- **Manual chunk selection for prune scans.** The scan body (and each plan's `params`) accepts `selection: { ops, allowProtected }`: ordered add/remove rectangles in chunk coordinates (at most 2,500) chosen by hand. Chosen chunks are deleted even where a soft rule keeps them; per dimension the summary reports `manualSoft`, `manualHard` and `manualBlocked` (kept: unreadable, or protected without `allowProtected`). Scan parameters now reach the script on stdin, so a large selection fits.
+- **Prune scan progress, cancel and dimensions.** `GET .../prune/scans/:jobId` carries `progress` (regions done of total, chunks, chunks per second, ETA) while a scan runs; `POST .../prune/scans/:jobId/cancel` stops it (the job then fails with `cancelled`, what it read stays cached); `GET .../prune/dimensions` lists the world's dimensions with region counts without reading a chunk, so a scan can be limited to chosen dimensions through `dimensions` in the scan body; `GET .../prune/status` reports the engine version and `unfinishedApply` when an earlier delete never finished. Feature `chunk-prune` is now version 2.
 
 ### Changed
 
 - **One slot per instance.** Stop, restart, rollback, backup, restore, mod writes and the upgrade now exclude each other: while one runs, another answers **423** `{ error, busy: { kind, jobId? } }` instead of racing it. Mod writes still queue behind each other. A status read is never blocked. New `423` response in the OpenAPI document.
+
+### Fixed
+
+- A prune job (`POST .../operations/prune`, or `prunePlan` on an upgrade) whose plan file is gone is refused with 404 before the server is stopped, instead of failing after the stop and forcing a restore. When the wrapper cannot read the plan directory it cannot tell, and the script's own check decides.
 
 ## [4.0.0] - 2026-10-10
 

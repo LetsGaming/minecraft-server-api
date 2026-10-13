@@ -5,6 +5,7 @@ import { makeFixture, touch, type Fixture } from "../helpers/instanceFixture.js"
 import {
   createUpgrades,
   parseUpgradeLine,
+  PrunePlanMissingError,
   UpgradeUnavailableError,
 } from "../../src/instances/upgrades.js";
 import { createOperationSlot, OperationBusyError } from "../../src/instances/operationSlot.js";
@@ -90,6 +91,16 @@ describe("starting an upgrade", () => {
       busy: { kind: "backup" },
     });
     await expect(upgrades.startUpgrade({ mcVersion: "1.21.5" })).rejects.toBeInstanceOf(OperationBusyError);
+  });
+
+  it("refuses a prune plan whose file is gone, before taking the slot", async () => {
+    const { slot, spawn, upgrades } = setup();
+    const planId = "0123456789abcdef";
+    await expect(upgrades.startUpgrade({ pruneOnly: true, prunePlan: planId })).rejects.toBeInstanceOf(PrunePlanMissingError);
+    expect(slot.current()).toBeNull();
+    expect(spawn.calls).toHaveLength(0);
+    touch(path.join(fx.cfg.scriptsDir, "common", "prune", `${planId}.plan.json`));
+    await expect(upgrades.startUpgrade({ pruneOnly: true, prunePlan: planId })).resolves.toHaveProperty("jobId");
   });
 
   it("holds the slot while it runs and frees it when it ends", async () => {

@@ -376,6 +376,43 @@ export interface PruneParams {
   zones: PruneZone[];
   /** Dimension ids to scan; null means every one found. */
   dimensions: string[] | null;
+  selection?: PruneSelection;
+  buildProtection?: "off" | "likely";
+}
+
+export interface PruneChunkInfo {
+  chunk: { dimension: string; cx: number; cz: number; rx: number; rz: number; slot: number };
+  thresholdMinutes: number;
+  present: boolean;
+  readable?: boolean;
+  unreadableReason?: string;
+  plannedForDeletion?: boolean;
+  bytes?: { region: number; entities: number; poi: number };
+  dataVersion?: number | null;
+  status?: string | null;
+  lastUpdate?: number | null;
+  inhabitedTicks?: number | null;
+  inhabitedMinutes?: number | null;
+  blockEntities?: Array<{ id: string; count: number }>;
+  structureStarts?: string[];
+  structureReferences?: string[];
+  signals?: string[];
+  unexplained?: boolean;
+  protectedBy?: Array<{ kind: "spawn" | "player" | "zone"; name?: string }>;
+}
+
+export interface PruneSelectionOp {
+  dimension: string;
+  mode: "add" | "remove";
+  x1: number;
+  z1: number;
+  x2: number;
+  z2: number;
+}
+
+export interface PruneSelection {
+  ops: PruneSelectionOp[];
+  allowProtected: boolean;
 }
 
 export interface PruneDimensionSummary {
@@ -387,6 +424,10 @@ export interface PruneDimensionSummary {
   protected: number;
   buffer: number;
   unreadable: number;
+  uncertain?: number;
+  manualSoft?: number;
+  manualHard?: number;
+  manualBlocked?: number;
   regionsEmptied: number;
   bytes: number;
 }
@@ -401,11 +442,32 @@ export interface PruneSummary {
   dimensions: PruneDimensionSummary[];
 }
 
+export interface PruneScanProgress {
+  /** Regions read so far, of `total`. */
+  done: number;
+  total: number;
+  chunks: number;
+  chunksPerSecond: number;
+  etaSeconds: number | null;
+}
+
 export interface PruneScanJob {
   jobId: string;
   state: "running" | "done" | "failed";
   result?: PruneSummary;
   error?: string;
+  progress?: PruneScanProgress;
+}
+
+export interface PruneDimensions {
+  dimensions: Array<{ id: string; regions: number }>;
+}
+
+export interface PruneEngineStatus {
+  engine: string;
+  version: number;
+  /** Present when a delete started and never finished: the world may be half pruned. */
+  unfinishedApply?: { state: "applying" | "failed"; plan: string; startedAt: string };
 }
 
 export interface LifecycleEvents {

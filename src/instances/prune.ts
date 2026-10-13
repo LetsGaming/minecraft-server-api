@@ -16,7 +16,15 @@ import path from "path";
 import { log } from "../platform/logger.js";
 import { interpreter, runAsInstanceUser, spawnJobAsInstanceUser, type JobSpawnHandle } from "../platform/spawn.js";
 import type { InstanceConfig } from "../config/types.js";
-import type { PruneParams, PruneScanJob, PruneSummary } from "../contracts/wire.js";
+import type {
+  PruneChunkInfo,
+  PruneDimensions,
+  PruneEngineStatus,
+  PruneParams,
+  PruneScanJob,
+  PruneScanProgress,
+  PruneSummary,
+} from "../contracts/wire.js";
 
 import { PRUNE_SCRIPT } from "./scripts.js";
 const PRUNE_DIR = path.join("common", "prune");
@@ -54,6 +62,9 @@ interface Job {
   result: PruneSummary | null;
   error: string | null;
   finishedAt: number | null;
+  progress: PruneScanProgress | null;
+  cancelled: boolean;
+  handle: JobSpawnHandle | null;
 }
 
 export interface PruneDeps {
@@ -71,7 +82,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Error codes the script may report; anything else reaches a client as "failed". */
-const KNOWN_CODES = new Set(["params", "scan_failed", "server_path"]);
+const KNOWN_CODES = new Set(["params", "scan_failed", "server_path", "cancelled", "plan_missing", "dimension", "inspect_failed"]);
+
+/** The numeric fields of a progress line, or null for a line that is not one. */
+function parseProgress(line: Record<string, unknown>): PruneScanProgress | null {
+  if (line.phase !== "scan") return null;
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const done = num(line.done);
+  const total = num(line.total);
+  if (done === null || total === null) return null;
+  return {
+    done,
+    total,
+    chunks: num(line.chunks) ?? 0,
+    chunksPerSecond: num(line.chunksPerSecond) ?? 0,
+    etaSeconds: num(line.etaSeconds),
+  };
+}
 
 export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
   const spawnJob = deps.spawnJob ?? spawnJobAsInstanceUser;
@@ -101,34 +128,50 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
     if (!script) throw new PruneUnavailableError();
     if ([...jobs.values()].some((j) => j.state === "running")) throw new PruneBusyError();
 
-    const job: Job = { id: randomUUID(), state: "running", result: null, error: null, finishedAt: null };
+    const job: Job = {
+      id: randomUUID(),
+      state: "running",
+      result: null,
+      error: null,
+      finishedAt: null,
+      progress: null,
+      cancelled: false,
+      handle: null,
+    };
     jobs.set(job.id, job);
 
+    // A manual selection can outgrow what one argument may hold, so parameters travel on stdin.
     const args = [interpreter("node"), script, "--scan"];
-    if (params) args.push(`--params=${JSON.stringify(params)}`);
+    if (params) args.push("--params-stdin");
 
     let last: Record<string, unknown> | null = null;
     const finish = (state: "done" | "failed", error: string | null): void => {
       job.state = state;
       job.error = error;
       job.finishedAt = now();
+      job.handle = null;
       trim();
     };
     try {
       const handle = spawnJob(cfg, args, {
         timeoutMs: PRUNE_SCAN_TIMEOUT_MS,
         label: "Prune scan",
+        ...(params ? { input: JSON.stringify(params) } : {}),
         onLine: (line) => {
           try {
             const parsed: unknown = JSON.parse(line);
-            if (isRecord(parsed) && typeof parsed.ok === "boolean") last = parsed;
+            if (!isRecord(parsed)) return;
+            if (typeof parsed.ok === "boolean") last = parsed;
+            else job.progress = parseProgress(parsed) ?? job.progress;
           } catch {
             /* not ours */
           }
         },
       });
+      job.handle = handle;
       void handle.done.then(
         ({ exitCode }) => {
+          if (job.cancelled) return finish("failed", "cancelled");
           if (exitCode === 0 && last?.ok === true) {
             job.result = last as unknown as PruneSummary;
             return finish("done", null);
@@ -156,16 +199,30 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
       state: job.state,
       ...(job.result ? { result: job.result } : {}),
       ...(job.error ? { error: job.error } : {}),
+      ...(job.progress ? { progress: job.progress } : {}),
     };
   }
 
-  /** Runs the script's `--settings` mode; the output is one JSON object. */
-  async function settingsCall(args: string[]): Promise<PruneParams> {
+  /**
+   * Stop a running scan. A scan only reads and every cache write is atomic, so
+   * stopping the process is safe; what it already read stays cached. Returns
+   * false when there is no such running scan.
+   */
+  function cancelPruneScan(jobId: string): boolean {
+    const job = jobs.get(jobId);
+    if (!job || job.state !== "running" || !job.handle) return false;
+    job.cancelled = true;
+    job.handle.cancel();
+    return true;
+  }
+
+  /** Runs a short mode of the script; the last output line is one JSON object. */
+  async function scriptCall(args: string[], label: string): Promise<Record<string, unknown>> {
     const script = await scriptPath();
     if (!script) throw new PruneUnavailableError();
     const res = await run(cfg, [interpreter("node"), script, ...args], {
       timeoutMs: PRUNE_SETTINGS_TIMEOUT_MS,
-      label: "Prune settings",
+      label,
     });
     let parsed: unknown;
     try {
@@ -173,16 +230,68 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
     } catch {
       throw new PruneScriptError("failed");
     }
-    if (!isRecord(parsed) || parsed.ok !== true || !isRecord(parsed.params)) {
+    if (!isRecord(parsed) || parsed.ok !== true) {
       const code = isRecord(parsed) && typeof parsed.code === "string" && KNOWN_CODES.has(parsed.code) ? parsed.code : "failed";
       throw new PruneScriptError(code);
     }
+    return parsed;
+  }
+
+  async function settingsCall(args: string[]): Promise<PruneParams> {
+    const parsed = await scriptCall(args, "Prune settings");
+    if (!isRecord(parsed.params)) throw new PruneScriptError("failed");
     return parsed.params as unknown as PruneParams;
   }
 
   const getPruneSettings = (): Promise<PruneParams> => settingsCall(["--settings=get"]);
   const setPruneSettings = (params: PruneParams): Promise<PruneParams> =>
     settingsCall(["--settings=set", `--params=${JSON.stringify(params)}`]);
+
+  /** The dimensions of the world with their region counts, from directory listings only. */
+  async function getPruneDimensions(): Promise<PruneDimensions> {
+    const parsed = await scriptCall(["--dimensions"], "Prune dimensions");
+    const list = Array.isArray(parsed.dimensions) ? parsed.dimensions : [];
+    const dimensions = list.filter(
+      (d): d is { id: string; regions: number } =>
+        isRecord(d) && typeof d.id === "string" && typeof d.regions === "number",
+    );
+    return { dimensions: dimensions.map((d) => ({ id: d.id, regions: d.regions })) };
+  }
+
+  /** One chunk of a stored plan, read now. Null when the plan is gone. */
+  async function inspectPruneChunk(planId: string, dimension: string, cx: number, cz: number): Promise<PruneChunkInfo | null> {
+    try {
+      const parsed = await scriptCall(
+        ["--inspect", `--plan=${planId}`, `--dimension=${dimension}`, `--cx=${cx}`, `--cz=${cz}`],
+        "Prune inspect",
+      );
+      const info: Record<string, unknown> = { ...parsed };
+      delete info.ok;
+      return info as unknown as PruneChunkInfo;
+    } catch (err) {
+      if (err instanceof PruneScriptError && err.code === "plan_missing") return null;
+      throw err;
+    }
+  }
+
+  /** Engine version, and a note when an earlier delete did not finish. */
+  async function getPruneStatus(): Promise<PruneEngineStatus> {
+    const parsed = await scriptCall(["--status"], "Prune status");
+    const unfinished = isRecord(parsed.unfinishedApply) ? parsed.unfinishedApply : null;
+    return {
+      engine: typeof parsed.engine === "string" ? parsed.engine : "unknown",
+      version: typeof parsed.version === "number" ? parsed.version : 0,
+      ...(unfinished && typeof unfinished.state === "string"
+        ? {
+            unfinishedApply: {
+              state: unfinished.state === "applying" ? ("applying" as const) : ("failed" as const),
+              plan: typeof unfinished.plan === "string" ? unfinished.plan : "",
+              startedAt: typeof unfinished.startedAt === "string" ? unfinished.startedAt : "",
+            },
+          }
+        : {}),
+    };
+  }
 
   /**
    * The cell and heat map of one dimension of a stored plan, as the JSON text
@@ -204,6 +313,10 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
   return {
     startPruneScan,
     getPruneScan,
+    cancelPruneScan,
+    getPruneDimensions,
+    getPruneStatus,
+    inspectPruneChunk,
     getPruneSettings,
     setPruneSettings,
     readPruneMap,

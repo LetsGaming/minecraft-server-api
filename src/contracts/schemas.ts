@@ -706,6 +706,38 @@ const PruneZone = named(
   }),
 );
 
+const PruneSelectionOp = named(
+  "PruneSelectionOp",
+  object({
+    dimension: string,
+    mode: { type: "string", enum: ["add", "remove"] },
+    x1: integer,
+    z1: integer,
+    x2: integer,
+    z2: integer,
+  }),
+);
+
+const PruneSelection = named(
+  "PruneSelection",
+  object(
+    {
+      ops: {
+        ...array(PruneSelectionOp),
+        description:
+          "Rectangles in chunk coordinates, inclusive, applied in order: add chooses chunks, " +
+          "remove takes them out again. Chosen chunks are deleted even where a soft rule " +
+          "(in use, buffer) would keep them. Unreadable chunks are never deleted.",
+      },
+      allowProtected: {
+        type: "boolean",
+        description: "Also let the selection override spawn, player areas and drawn zones.",
+      },
+    },
+    { required: ["ops", "allowProtected"] },
+  ),
+);
+
 export const PruneParams = named(
   "PruneParams",
   object(
@@ -719,6 +751,14 @@ export const PruneParams = named(
         ...array(string),
         nullable: true,
         description: "Dimension ids to scan; null means every one found.",
+      },
+      selection: PruneSelection,
+      buildProtection: {
+        type: "string",
+        enum: ["off", "likely"],
+        description:
+          "likely: keep chunks the rules would delete when they hold block entities no structure explains " +
+          "(chests, signs, furnaces, beds, redstone parts, modded blocks). off: ignore what chunks contain.",
       },
     },
     { required: ["thresholdMinutes", "spawnRadiusChunks", "playerRadiusChunks", "bufferChunks", "zones", "dimensions"] },
@@ -736,6 +776,8 @@ export const PruneParamsRequest = named(
       bufferChunks: integer,
       zones: array(PruneZone),
       dimensions: { ...array(string), nullable: true },
+      selection: PruneSelection,
+      buildProtection: { type: "string", enum: ["off", "likely"] },
     },
     { required: [] },
   ),
@@ -743,18 +785,27 @@ export const PruneParamsRequest = named(
 
 const PruneDimensionSummary = named(
   "PruneDimensionSummary",
-  object({
-    id: string,
-    regions: integer,
-    chunks: integer,
-    delete: integer,
-    active: integer,
-    protected: integer,
-    buffer: integer,
-    unreadable: integer,
-    regionsEmptied: integer,
-    bytes: integer,
-  }),
+  object(
+    {
+      id: string,
+      regions: integer,
+      chunks: integer,
+      delete: { ...integer, description: "Everything that would go: what the rules found plus what was chosen by hand." },
+      active: integer,
+      protected: integer,
+      buffer: integer,
+      unreadable: integer,
+      uncertain: { ...integer, description: "Kept by build protection: the rules would delete them but they hold things a structure does not explain." },
+      manualSoft: { ...integer, description: "Chosen by hand over a soft rule (in use, buffer); part of delete." },
+      manualHard: { ...integer, description: "Chosen by hand over a hard protection; part of delete." },
+      manualBlocked: { ...integer, description: "Chosen by hand but kept: unreadable, or protected without the override." },
+      regionsEmptied: integer,
+      bytes: integer,
+    },
+    {
+      required: ["id", "regions", "chunks", "delete", "active", "protected", "buffer", "unreadable", "regionsEmptied", "bytes"],
+    },
+  ),
 );
 
 export const PruneSummary = named(
@@ -775,6 +826,20 @@ export const PruneScanStarted = named(
   object({ jobId: { ...string, description: "The scan to poll." } }),
 );
 
+export const PruneScanProgress = named(
+  "PruneScanProgress",
+  object(
+    {
+      done: integer,
+      total: integer,
+      chunks: integer,
+      chunksPerSecond: integer,
+      etaSeconds: { type: "integer", nullable: true },
+    },
+    { required: ["done", "total", "chunks", "chunksPerSecond", "etaSeconds"] },
+  ),
+);
+
 export const PruneScanJob = named(
   "PruneScanJob",
   object(
@@ -782,9 +847,62 @@ export const PruneScanJob = named(
       jobId: string,
       state: { type: "string", enum: ["running", "done", "failed"] },
       result: PruneSummary,
-      error: { ...string, description: "A fixed reason code when the scan failed." },
+      error: { ...string, description: "A fixed reason code when the scan failed (`cancelled` when it was stopped)." },
+      progress: PruneScanProgress,
     },
     { required: ["jobId", "state"] },
+  ),
+);
+
+export const PruneChunkInfo = named(
+  "PruneChunkInfo",
+  object(
+    {
+      chunk: object({ dimension: string, cx: integer, cz: integer, rx: integer, rz: integer, slot: integer }),
+      thresholdMinutes: number,
+      present: { type: "boolean", description: "Whether the world has this chunk at all." },
+      readable: { type: "boolean", description: "False when the chunk exists but cannot be read; it is then never deleted." },
+      unreadableReason: string,
+      plannedForDeletion: { type: "boolean", description: "Whether this plan deletes the chunk." },
+      bytes: object({ region: integer, entities: integer, poi: integer }),
+      dataVersion: { type: "integer", nullable: true },
+      status: { type: "string", nullable: true },
+      lastUpdate: { type: "integer", nullable: true },
+      inhabitedTicks: { type: "number", nullable: true },
+      inhabitedMinutes: { type: "number", nullable: true },
+      blockEntities: array(object({ id: string, count: integer })),
+      structureStarts: array(string),
+      structureReferences: array(string),
+      signals: array(string),
+      unexplained: { type: "boolean", description: "Block entities that no structure or spawner explains." },
+      protectedBy: array(object({ kind: { type: "string", enum: ["spawn", "player", "zone"] }, name: string }, { required: ["kind"] })),
+    },
+    { required: ["chunk", "thresholdMinutes", "present"] },
+  ),
+);
+
+export const PruneCancelled = named("PruneCancelled", object({ cancelled: { type: "boolean" } }, { required: ["cancelled"] }));
+
+export const PruneDimensions = named(
+  "PruneDimensions",
+  object(
+    { dimensions: array(object({ id: string, regions: integer }, { required: ["id", "regions"] })) },
+    { required: ["dimensions"] },
+  ),
+);
+
+export const PruneEngineStatus = named(
+  "PruneEngineStatus",
+  object(
+    {
+      engine: string,
+      version: integer,
+      unfinishedApply: object(
+        { state: { type: "string", enum: ["applying", "failed"] }, plan: string, startedAt: string },
+        { required: ["state", "plan", "startedAt"] },
+      ),
+    },
+    { required: ["engine", "version"] },
   ),
 );
 
