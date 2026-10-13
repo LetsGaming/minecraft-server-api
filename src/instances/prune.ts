@@ -82,7 +82,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Error codes the script may report; anything else reaches a client as "failed". */
-const KNOWN_CODES = new Set(["params", "scan_failed", "server_path", "cancelled", "plan_missing", "dimension", "inspect_failed"]);
+const KNOWN_CODES = new Set(["params", "scan_failed", "server_path", "cancelled", "plan_missing", "dimension", "inspect_failed", "no_region", "tile_failed"]);
+
+/** A tile is drawn by reading a whole region, so it gets longer than a settings call. */
+export const PRUNE_TILE_TIMEOUT_MS = 90_000;
+/** One tile is a few hundred KB; this only guards against a file that is not one. */
+export const PRUNE_TILE_MAX_BYTES = 4 * 1024 * 1024;
+/** Tiles drawn at once per instance; a zoomed-out view asks for many. */
+const TILE_CONCURRENCY = 2;
+/** What the script reports as the tile's place under common/prune/tiles. */
+const TILE_PATH_RE = /^[a-z0-9_.:-]{1,64}\/r\.-?\d+\.-?\d+\.[0-9a-f]{16}\.png$/;
 
 /** The numeric fields of a progress line, or null for a line that is not one. */
 function parseProgress(line: Record<string, unknown>): PruneScanProgress | null {
@@ -217,11 +226,11 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
   }
 
   /** Runs a short mode of the script; the last output line is one JSON object. */
-  async function scriptCall(args: string[], label: string): Promise<Record<string, unknown>> {
+  async function scriptCall(args: string[], label: string, timeoutMs = PRUNE_SETTINGS_TIMEOUT_MS): Promise<Record<string, unknown>> {
     const script = await scriptPath();
     if (!script) throw new PruneUnavailableError();
     const res = await run(cfg, [interpreter("node"), script, ...args], {
-      timeoutMs: PRUNE_SETTINGS_TIMEOUT_MS,
+      timeoutMs,
       label,
     });
     let parsed: unknown;
@@ -274,6 +283,49 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
     }
   }
 
+  let tilesRunning = 0;
+  const tileQueue: Array<() => void> = [];
+
+  /** At most TILE_CONCURRENCY tiles are drawn at once; the rest wait their turn. */
+  async function withTileSlot<T>(task: () => Promise<T>): Promise<T> {
+    if (tilesRunning >= TILE_CONCURRENCY) await new Promise<void>((resolve) => tileQueue.push(resolve));
+    tilesRunning++;
+    try {
+      return await task();
+    } finally {
+      tilesRunning--;
+      tileQueue.shift()?.();
+    }
+  }
+
+  /**
+   * The terrain tile of one region as PNG bytes, drawn by the script or taken from its cache.
+   * Null when the dimension or the region does not exist. `etag` names the picture: it changes
+   * when the region file does.
+   */
+  async function readPruneTile(dimension: string, rx: number, rz: number): Promise<{ png: Buffer; etag: string } | null> {
+    return withTileSlot(async () => {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = await scriptCall(
+          ["--tile", `--dimension=${dimension}`, `--rx=${rx}`, `--rz=${rz}`],
+          "Prune tile",
+          PRUNE_TILE_TIMEOUT_MS,
+        );
+      } catch (err) {
+        if (err instanceof PruneScriptError && err.code === "no_region") return null;
+        throw err;
+      }
+      const relative = parsed.tile;
+      if (typeof relative !== "string" || !TILE_PATH_RE.test(relative)) throw new PruneScriptError("failed");
+      const file = path.join(cfg.scriptsDir, PRUNE_DIR, "tiles", ...relative.split("/"));
+      const stat = await fsp.stat(file);
+      if (stat.size > PRUNE_TILE_MAX_BYTES) throw new PruneScriptError("tile_too_large");
+      const png = await fsp.readFile(file);
+      return { png, etag: `"${path.basename(relative, ".png")}"` };
+    });
+  }
+
   /** Engine version, and a note when an earlier delete did not finish. */
   async function getPruneStatus(): Promise<PruneEngineStatus> {
     const parsed = await scriptCall(["--status"], "Prune status");
@@ -317,6 +369,7 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
     getPruneDimensions,
     getPruneStatus,
     inspectPruneChunk,
+    readPruneTile,
     getPruneSettings,
     setPruneSettings,
     readPruneMap,

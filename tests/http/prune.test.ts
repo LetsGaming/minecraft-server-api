@@ -24,6 +24,7 @@ function build(overrides: Record<string, unknown> = {}) {
     getPruneScan: vi.fn(() => ({ jobId: JOB, state: "running" })),
     getPruneDimensions: vi.fn(async () => ({ dimensions: [{ id: "overworld", regions: 4 }] })),
     getPruneStatus: vi.fn(async () => ({ engine: "builtin", version: 1 })),
+    readPruneTile: vi.fn(async () => ({ png: Buffer.from([0x89, 0x50, 0x4e, 0x47]), etag: '"r.0.0.abc"' })),
     inspectPruneChunk: vi.fn(async () => ({ chunk: { dimension: "overworld", cx: 1, cz: 2, rx: 0, rz: 0, slot: 65 }, thresholdMinutes: 5, present: true, readable: true, blockEntities: [{ id: "minecraft:chest", count: 2 }], protectedBy: [{ kind: "zone", name: "base" }] })),
     cancelPruneScan: vi.fn(() => true),
     readPruneMap: vi.fn(async () => '{"dimension":"overworld","regions":{"r.0.0":{"cell":"AA==","heat":"AA=="}}}'),
@@ -177,6 +178,29 @@ describe("dimensions, status and cancel", () => {
     const { app, entry } = build();
     expect((await app.inject({ url: url(`/prune/plans/${PLAN}/chunk?${query}`) })).statusCode).toBe(400);
     expect(entry.inspectPruneChunk).not.toHaveBeenCalled();
+  });
+
+  it("serves a tile as a PNG with its ETag, and 304s a tile the client already has", async () => {
+    const { app, entry } = build();
+    const res = await app.inject({ url: url("/prune/tiles/overworld/-1/2") });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toBe("image/png");
+    expect(res.headers.etag).toBe('"r.0.0.abc"');
+    expect([...res.rawPayload]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(entry.readPruneTile).toHaveBeenCalledWith("overworld", -1, 2);
+    const same = await app.inject({ url: url("/prune/tiles/overworld/-1/2"), headers: { "if-none-match": '"r.0.0.abc"' } });
+    expect(same.statusCode).toBe(304);
+    expect(same.rawPayload.length).toBe(0);
+  });
+
+  it("404s a region that does not exist, and 400s a bad tile request", async () => {
+    const none = build({ readPruneTile: vi.fn(async () => null) });
+    expect((await none.app.inject({ url: url("/prune/tiles/overworld/0/0") })).statusCode).toBe(404);
+    const { app, entry } = build();
+    for (const bad of ["/prune/tiles/Over World/0/0", "/prune/tiles/overworld/x/0", "/prune/tiles/overworld/0/1.5", "/prune/tiles/overworld/999999/0"]) {
+      expect((await app.inject({ url: url(bad) })).statusCode).toBe(400);
+    }
+    expect(entry.readPruneTile).not.toHaveBeenCalled();
   });
 
   it("501s when the suite has no prune script", async () => {

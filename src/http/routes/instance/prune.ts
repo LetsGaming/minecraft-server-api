@@ -5,6 +5,7 @@
  *                GET  /prune/dimensions          the world's dimensions, no chunk read,
  *                GET  /prune/status              engine version, an unfinished delete,
  *                GET  /prune/plans/:planId/chunk one chunk of a plan, in full,
+ *                GET  /prune/tiles/:dimension/:rx/:rz  a region drawn from above (PNG),
  *                POST /prune/scans               start a read-only scan (a job),
  *                GET  /prune/scans/:jobId        poll it (with progress),
  *                POST /prune/scans/:jobId/cancel stop it,
@@ -278,6 +279,47 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
       const job = entry.getPruneScan(req.params.jobId);
       if (!job) return reply.status(404).send({ error: "Unknown or expired scan" });
       return job;
+    },
+  );
+
+  app.get<{ Params: InstanceParams & { dimension: string; rx: string; rz: string } }>(
+    `${P}/prune/tiles/:dimension/:rx/:rz`,
+    { schema: {
+      summary: "A region drawn from above",
+      description:
+        "A 512 x 512 PNG, one pixel per block, of the region's terrain (no biome tint). Drawn when " +
+        "first asked for and cached by the region file's fingerprint, so an edited region gets a new " +
+        "picture. Chunks that cannot be read, or predate Minecraft 1.18, are transparent. At most two " +
+        "tiles are drawn at once per instance. Supports If-None-Match.",
+      tags: ["prune"],
+      params: instanceParams({
+        dimension: "Dimension id from the summary.",
+        rx: "Region x coordinate.",
+        rz: "Region z coordinate.",
+      }),
+      requestHeaders: { "if-none-match": { description: "The ETag of a tile already held.", required: false } },
+      produces: { 200: "image/png", 304: "image/png" },
+      response: { 200: { type: "string" }, 304: { type: "string" }, ...errors(400, 404, 500, 501) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      const { dimension } = req.params;
+      const rx = Number(req.params.rx);
+      const rz = Number(req.params.rz);
+      if (!DIMENSION_RE.test(dimension) || !Number.isInteger(rx) || !Number.isInteger(rz) || Math.abs(rx) > 100_000 || Math.abs(rz) > 100_000) {
+        return reply.status(400).send({ error: "Invalid dimension or region" });
+      }
+      try {
+        const tile = await entry.readPruneTile(dimension, rx, rz);
+        if (tile === null) return reply.status(404).send({ error: "No such region" });
+        reply.header("etag", tile.etag).header("cache-control", "private, max-age=0, must-revalidate");
+        if (req.headers["if-none-match"] === tile.etag) return reply.status(304).send();
+        return reply.type("image/png").send(tile.png);
+      } catch (err) {
+        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+        return internalError(reply, `prune/tile ${req.params.id}`, err);
+      }
     },
   );
 
