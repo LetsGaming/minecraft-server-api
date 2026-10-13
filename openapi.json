@@ -3080,6 +3080,89 @@
         }
       }
     },
+    "/instances/{id}/prune/dimensions": {
+      "get": {
+        "operationId": "getInstancesByIdPruneDimensions",
+        "summary": "The dimensions of the world",
+        "description": "Names and region-file counts, from directory listings only (no chunk is read), so a client can offer a choice before scanning. A scan limited to chosen dimensions reads only those.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneDimensions"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/instances/{id}/prune/plans/{planId}/map/{index}": {
       "get": {
         "operationId": "getInstancesByIdPrunePlansByPlanIdMapByIndex",
@@ -3366,6 +3449,88 @@
         }
       }
     },
+    "/instances/{id}/prune/scans/{jobId}/cancel": {
+      "post": {
+        "operationId": "postInstancesByIdPruneScansByJobIdCancel",
+        "summary": "Stop a running scan",
+        "description": "A scan only reads, so stopping it is safe; what it already read stays cached for the next scan. The job then reports `failed` with error `cancelled`.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Job id from the start request."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneCancelled"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/instances/{id}/prune/settings": {
       "get": {
         "operationId": "getInstancesByIdPruneSettings",
@@ -3493,6 +3658,89 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/instances/{id}/prune/status": {
+      "get": {
+        "operationId": "getInstancesByIdPruneStatus",
+        "summary": "The prune engine's status",
+        "description": "The engine version, and `unfinishedApply` when a delete started and never finished (the world may be half pruned; restore the job's backup).",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PruneEngineStatus"
                 }
               }
             }
@@ -5830,6 +6078,46 @@
         ],
         "additionalProperties": false
       },
+      "PruneCancelled": {
+        "type": "object",
+        "properties": {
+          "cancelled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cancelled"
+        ],
+        "additionalProperties": false
+      },
+      "PruneDimensions": {
+        "type": "object",
+        "properties": {
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "regions": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "regions"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "dimensions"
+        ],
+        "additionalProperties": false
+      },
       "PruneDimensionSummary": {
         "type": "object",
         "properties": {
@@ -5875,6 +6163,46 @@
           "unreadable",
           "regionsEmptied",
           "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "PruneEngineStatus": {
+        "type": "object",
+        "properties": {
+          "engine": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "unfinishedApply": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "applying",
+                  "failed"
+                ]
+              },
+              "plan": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "plan",
+              "startedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "engine",
+          "version"
         ],
         "additionalProperties": false
       },
@@ -6009,12 +6337,44 @@
           },
           "error": {
             "type": "string",
-            "description": "A fixed reason code when the scan failed."
+            "description": "A fixed reason code when the scan failed (`cancelled` when it was stopped)."
+          },
+          "progress": {
+            "$ref": "#/components/schemas/PruneScanProgress"
           }
         },
         "required": [
           "jobId",
           "state"
+        ],
+        "additionalProperties": false
+      },
+      "PruneScanProgress": {
+        "type": "object",
+        "properties": {
+          "done": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "chunks": {
+            "type": "integer"
+          },
+          "chunksPerSecond": {
+            "type": "integer"
+          },
+          "etaSeconds": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "done",
+          "total",
+          "chunks",
+          "chunksPerSecond",
+          "etaSeconds"
         ],
         "additionalProperties": false
       },

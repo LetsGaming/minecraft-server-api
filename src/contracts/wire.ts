@@ -401,11 +401,32 @@ export interface PruneSummary {
   dimensions: PruneDimensionSummary[];
 }
 
+export interface PruneScanProgress {
+  /** Regions read so far, of `total`. */
+  done: number;
+  total: number;
+  chunks: number;
+  chunksPerSecond: number;
+  etaSeconds: number | null;
+}
+
 export interface PruneScanJob {
   jobId: string;
   state: "running" | "done" | "failed";
   result?: PruneSummary;
   error?: string;
+  progress?: PruneScanProgress;
+}
+
+export interface PruneDimensions {
+  dimensions: Array<{ id: string; regions: number }>;
+}
+
+export interface PruneEngineStatus {
+  engine: string;
+  version: number;
+  /** Present when a delete started and never finished: the world may be half pruned. */
+  unfinishedApply?: { state: "applying" | "failed"; plan: string; startedAt: string };
 }
 
 export interface LifecycleEvents {

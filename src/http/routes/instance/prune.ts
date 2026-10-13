@@ -2,8 +2,11 @@
  * Chunk pruning routes.
  *
  *   chunk-prune  GET/PUT /prune/settings         the saved parameters,
+ *                GET  /prune/dimensions          the world's dimensions, no chunk read,
+ *                GET  /prune/status              engine version, an unfinished delete,
  *                POST /prune/scans               start a read-only scan (a job),
- *                GET  /prune/scans/:jobId        poll it,
+ *                GET  /prune/scans/:jobId        poll it (with progress),
+ *                POST /prune/scans/:jobId/cancel stop it,
  *                GET  /prune/plans/:planId/map/:index  one dimension's map,
  *                POST /operations/prune          delete what a plan names: a job
  *                                                that stops the server, backs it
@@ -16,6 +19,9 @@
 import type { FastifyInstance } from "fastify";
 
 import {
+  PruneCancelled,
+  PruneDimensions,
+  PruneEngineStatus,
   PruneMap,
   PruneParams,
   PruneParamsRequest,
@@ -131,6 +137,75 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
         if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
         return internalError(reply, `prune/settings ${req.params.id}`, err);
       }
+    },
+  );
+
+  app.get<{ Params: InstanceParams }>(
+    `${P}/prune/dimensions`,
+    { schema: {
+      summary: "The dimensions of the world",
+      description:
+        "Names and region-file counts, from directory listings only (no chunk is read), " +
+        "so a client can offer a choice before scanning. A scan limited to chosen " +
+        "dimensions reads only those.",
+      tags: ["prune"],
+      params: instanceParams(),
+      response: { 200: PruneDimensions, ...errors(404, 500, 501) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      try {
+        return await entry.getPruneDimensions();
+      } catch (err) {
+        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+        return internalError(reply, `prune/dimensions ${req.params.id}`, err);
+      }
+    },
+  );
+
+  app.get<{ Params: InstanceParams }>(
+    `${P}/prune/status`,
+    { schema: {
+      summary: "The prune engine's status",
+      description:
+        "The engine version, and `unfinishedApply` when a delete started and never " +
+        "finished (the world may be half pruned; restore the job's backup).",
+      tags: ["prune"],
+      params: instanceParams(),
+      response: { 200: PruneEngineStatus, ...errors(404, 500, 501) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      try {
+        return await entry.getPruneStatus();
+      } catch (err) {
+        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+        return internalError(reply, `prune/status ${req.params.id}`, err);
+      }
+    },
+  );
+
+  app.post<{ Params: InstanceParams & { jobId: string } }>(
+    `${P}/prune/scans/:jobId/cancel`,
+    { schema: {
+      summary: "Stop a running scan",
+      description:
+        "A scan only reads, so stopping it is safe; what it already read stays cached " +
+        "for the next scan. The job then reports `failed` with error `cancelled`.",
+      tags: ["prune"],
+      params: instanceParams({ jobId: "Job id from the start request." }),
+      response: { 200: PruneCancelled, ...errors(400, 404) },
+    } },
+    async (req, reply) => {
+      const entry = resolve(req.params.id, reply);
+      if (!entry) return;
+      if (!JOB_ID_RE.test(req.params.jobId)) return reply.status(400).send({ error: "Invalid job id" });
+      if (!entry.cancelPruneScan(req.params.jobId)) {
+        return reply.status(404).send({ error: "No such running scan" });
+      }
+      return { cancelled: true };
     },
   );
 

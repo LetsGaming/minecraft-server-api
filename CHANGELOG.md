@@ -22,6 +22,7 @@ unchanged.
 
 - **Chunk pruning.** `POST /instances/:id/prune/scans` starts a read-only scan of unused chunks as a background job (`GET .../prune/scans/:jobId` polls it); `GET .../prune/plans/:planId/map/:index` returns one dimension's map for drawing; `GET/PUT .../prune/settings` keeps the parameters; `POST .../operations/prune` deletes what a plan names as a job that stops the server, backs it up, deletes, starts it and restores the backup on failure (polled through the upgrade job routes). New feature `chunk-prune`; `Capabilities.prune` says whether `world/prune-chunks.js` exists. `POST /operations/upgrade` accepts `prunePlan` to prune inside an upgrade under its single backup.
 - Upgrade jobs report `kind` (`upgrade` or `prune`).
+- **Prune scan progress, cancel and dimensions.** `GET .../prune/scans/:jobId` carries `progress` (regions done of total, chunks, chunks per second, ETA) while a scan runs; `POST .../prune/scans/:jobId/cancel` stops it (the job then fails with `cancelled`, what it read stays cached); `GET .../prune/dimensions` lists the world's dimensions with region counts without reading a chunk, so a scan can be limited to chosen dimensions through `dimensions` in the scan body; `GET .../prune/status` reports the engine version and `unfinishedApply` when an earlier delete never finished. Feature `chunk-prune` is now version 2.
 
 ### Changed
 

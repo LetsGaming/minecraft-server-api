@@ -22,6 +22,9 @@ function build(overrides: Record<string, unknown> = {}) {
     setPruneSettings: vi.fn(async (p: unknown) => ({ ...PARAMS, ...(p as object) })),
     startPruneScan: vi.fn(async () => ({ jobId: JOB })),
     getPruneScan: vi.fn(() => ({ jobId: JOB, state: "running" })),
+    getPruneDimensions: vi.fn(async () => ({ dimensions: [{ id: "overworld", regions: 4 }] })),
+    getPruneStatus: vi.fn(async () => ({ engine: "builtin", version: 1 })),
+    cancelPruneScan: vi.fn(() => true),
     readPruneMap: vi.fn(async () => '{"dimension":"overworld","regions":{"r.0.0":{"cell":"AA==","heat":"AA=="}}}'),
     startUpgrade: vi.fn(async () => ({ jobId: JOB })),
     ...overrides,
@@ -133,6 +136,35 @@ describe("maps", () => {
     expect((await none.app.inject({ url: url(`/prune/plans/${PLAN}/map/0`) })).statusCode).toBe(404);
     const big = build({ readPruneMap: vi.fn(async () => { throw new PruneScriptError("map_too_large"); }) });
     expect((await big.app.inject({ url: url(`/prune/plans/${PLAN}/map/0`) })).statusCode).toBe(500);
+  });
+});
+
+describe("dimensions, status and cancel", () => {
+  it("lists the dimensions", async () => {
+    const { app } = build();
+    const res = await app.inject({ url: url("/prune/dimensions") });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ dimensions: [{ id: "overworld", regions: 4 }] });
+  });
+
+  it("reports the engine status", async () => {
+    const { app } = build();
+    expect((await app.inject({ url: url("/prune/status") })).json()).toEqual({ engine: "builtin", version: 1 });
+  });
+
+  it("cancels a scan, 404s one that is not running, 400s a bad id", async () => {
+    const { app, entry } = build();
+    const ok = await app.inject({ method: "POST", url: url(`/prune/scans/${JOB}/cancel`) });
+    expect(ok.json()).toEqual({ cancelled: true });
+    expect(entry.cancelPruneScan).toHaveBeenCalledWith(JOB);
+    const gone = build({ cancelPruneScan: vi.fn(() => false) });
+    expect((await gone.app.inject({ method: "POST", url: url(`/prune/scans/${JOB}/cancel`) })).statusCode).toBe(404);
+    expect((await app.inject({ method: "POST", url: url("/prune/scans/x/cancel") })).statusCode).toBe(400);
+  });
+
+  it("501s when the suite has no prune script", async () => {
+    const { app } = build({ getPruneDimensions: vi.fn(async () => { throw new PruneUnavailableError(); }) });
+    expect((await app.inject({ url: url("/prune/dimensions") })).statusCode).toBe(501);
   });
 });
 

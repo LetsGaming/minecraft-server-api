@@ -233,6 +233,8 @@ export interface JobSpawnOptions {
 export interface JobSpawnHandle {
   /** Resolves when the process ends; rejects on spawn failure or timeout. */
   done: Promise<{ exitCode: number | null; stderr: string }>;
+  /** Ask the whole process group to stop (SIGTERM, then SIGKILL after a grace period). */
+  cancel(): void;
 }
 
 /**
@@ -249,6 +251,7 @@ export function spawnJobAsInstanceUser(
   command: string[],
   opts: JobSpawnOptions,
 ): JobSpawnHandle {
+  let cancel: () => void = () => undefined;
   const done = new Promise<{ exitCode: number | null; stderr: string }>((resolve, reject) => {
     const child = spawn("sudo", ["-n", "-u", target.linuxUser, ...command], {
       cwd: target.scriptsDir,
@@ -268,6 +271,12 @@ export function spawnJobAsInstanceUser(
       } catch {
         child.kill(signal);
       }
+    };
+
+    cancel = () => {
+      signalGroup("SIGTERM");
+      const kill = setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS);
+      kill.unref();
     };
 
     const timer = setTimeout(() => {
@@ -312,5 +321,5 @@ export function spawnJobAsInstanceUser(
       reject(new Error(`Failed to start ${opts.label.toLowerCase()}: ${err.message}`));
     });
   });
-  return { done };
+  return { done, cancel: () => cancel() };
 }

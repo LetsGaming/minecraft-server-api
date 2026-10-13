@@ -775,6 +775,20 @@ export const PruneScanStarted = named(
   object({ jobId: { ...string, description: "The scan to poll." } }),
 );
 
+export const PruneScanProgress = named(
+  "PruneScanProgress",
+  object(
+    {
+      done: integer,
+      total: integer,
+      chunks: integer,
+      chunksPerSecond: integer,
+      etaSeconds: { type: "integer", nullable: true },
+    },
+    { required: ["done", "total", "chunks", "chunksPerSecond", "etaSeconds"] },
+  ),
+);
+
 export const PruneScanJob = named(
   "PruneScanJob",
   object(
@@ -782,9 +796,35 @@ export const PruneScanJob = named(
       jobId: string,
       state: { type: "string", enum: ["running", "done", "failed"] },
       result: PruneSummary,
-      error: { ...string, description: "A fixed reason code when the scan failed." },
+      error: { ...string, description: "A fixed reason code when the scan failed (`cancelled` when it was stopped)." },
+      progress: PruneScanProgress,
     },
     { required: ["jobId", "state"] },
+  ),
+);
+
+export const PruneCancelled = named("PruneCancelled", object({ cancelled: { type: "boolean" } }, { required: ["cancelled"] }));
+
+export const PruneDimensions = named(
+  "PruneDimensions",
+  object(
+    { dimensions: array(object({ id: string, regions: integer }, { required: ["id", "regions"] })) },
+    { required: ["dimensions"] },
+  ),
+);
+
+export const PruneEngineStatus = named(
+  "PruneEngineStatus",
+  object(
+    {
+      engine: string,
+      version: integer,
+      unfinishedApply: object(
+        { state: { type: "string", enum: ["applying", "failed"] }, plan: string, startedAt: string },
+        { required: ["state", "plan", "startedAt"] },
+      ),
+    },
+    { required: ["engine", "version"] },
   ),
 );
 

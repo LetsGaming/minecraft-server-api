@@ -26,6 +26,7 @@ const SUMMARY = {
 };
 
 function fakeSpawn() {
+  let cancelled = 0;
   const calls: string[][] = [];
   let emit: (line: string) => void = () => {};
   let finish: (code: number | null) => void = () => {};
@@ -38,9 +39,13 @@ function fakeSpawn() {
         finish = (c) => resolve({ exitCode: c, stderr: "" });
         fail = reject;
       }),
+      cancel: () => {
+        cancelled++;
+        finish(null);
+      },
     };
   };
-  return { spawnJob, calls, line: (o: object) => emit(JSON.stringify(o)), end: (c: number | null) => finish(c), crash: (e: Error) => fail(e) };
+  return { spawnJob, calls, cancelCount: () => cancelled, line: (o: object) => emit(JSON.stringify(o)), end: (c: number | null) => finish(c), crash: (e: Error) => fail(e) };
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -58,6 +63,50 @@ function setup(withScript = true) {
   const prune = createPrune(fx.cfg, { spawnJob: spawn.spawnJob as never, run: run as never });
   return { prune, spawn, runCalls, setRunOutput: (o: string) => (runOutput = o) };
 }
+
+describe("scan progress, cancel, dimensions and status", () => {
+  it("reports the latest progress line while a scan runs", async () => {
+    const { prune, spawn } = setup();
+    const { jobId } = await prune.startPruneScan();
+    spawn.line({ phase: "scan", done: 3, total: 10, chunks: 3000, chunksPerSecond: 900, etaSeconds: 8 });
+    spawn.line({ phase: "scan", done: 5, total: 10, chunks: 5000, chunksPerSecond: 950, etaSeconds: 5 });
+    spawn.line({ phase: "scan", done: "x", total: 10 });
+    expect(prune.getPruneScan(jobId)).toMatchObject({
+      state: "running",
+      progress: { done: 5, total: 10, chunks: 5000, chunksPerSecond: 950, etaSeconds: 5 },
+    });
+  });
+
+  it("cancels a running scan, which then reports cancelled", async () => {
+    const { prune, spawn } = setup();
+    const { jobId } = await prune.startPruneScan();
+    expect(prune.cancelPruneScan(jobId)).toBe(true);
+    await flush();
+    expect(spawn.cancelCount()).toBe(1);
+    expect(prune.getPruneScan(jobId)).toMatchObject({ state: "failed", error: "cancelled" });
+    expect(prune.cancelPruneScan(jobId)).toBe(false);
+    expect(prune.cancelPruneScan("nope")).toBe(false);
+  });
+
+  it("lists the dimensions and drops malformed entries", async () => {
+    const { prune, setRunOutput, runCalls } = setup();
+    setRunOutput(JSON.stringify({ ok: true, dimensions: [{ id: "overworld", regions: 3 }, { id: 5 }, "x"] }));
+    expect(await prune.getPruneDimensions()).toEqual({ dimensions: [{ id: "overworld", regions: 3 }] });
+    expect(runCalls[0]).toContain("--dimensions");
+  });
+
+  it("reports an unfinished delete from the status", async () => {
+    const { prune, setRunOutput } = setup();
+    setRunOutput(JSON.stringify({ ok: true, engine: "builtin", version: 1, unfinishedApply: { state: "applying", plan: "0123456789abcdef", startedAt: "2026-10-13T10:00:00Z", pid: 4 } }));
+    expect(await prune.getPruneStatus()).toEqual({
+      engine: "builtin",
+      version: 1,
+      unfinishedApply: { state: "applying", plan: "0123456789abcdef", startedAt: "2026-10-13T10:00:00Z" },
+    });
+    setRunOutput(JSON.stringify({ ok: true, engine: "builtin", version: 1 }));
+    expect(await prune.getPruneStatus()).toEqual({ engine: "builtin", version: 1 });
+  });
+});
 
 describe("a prune scan", () => {
   it("runs the script with the parameters and ends with the summary", async () => {
