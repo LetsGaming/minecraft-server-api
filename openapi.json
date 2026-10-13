@@ -3927,6 +3927,147 @@
         }
       }
     },
+    "/instances/{id}/prune/tiles/{dimension}/{rx}/{rz}": {
+      "get": {
+        "operationId": "getInstancesByIdPruneTilesByDimensionByRxByRz",
+        "summary": "A region drawn from above",
+        "description": "A 512 x 512 PNG, one pixel per block, of the region's terrain (no biome tint). Drawn when first asked for and cached by the region file's fingerprint, so an edited region gets a new picture. Chunks that cannot be read, or predate Minecraft 1.18, are transparent. At most two tiles are drawn at once per instance. Supports If-None-Match.",
+        "tags": [
+          "prune"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Instance id from `GET /instances`."
+          },
+          {
+            "name": "dimension",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Dimension id from the summary."
+          },
+          {
+            "name": "rx",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Region x coordinate."
+          },
+          {
+            "name": "rz",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Region z coordinate."
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "description": "The ETag of a tile already held.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "OK",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Status 501",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/instances/{id}/running": {
       "get": {
         "operationId": "getInstancesByIdRunning",

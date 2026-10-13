@@ -107,6 +107,52 @@ describe("scan progress, cancel, dimensions and status", () => {
     expect(await prune.inspectPruneChunk("0123456789abcdef", "overworld", 0, 0)).toBeNull();
   });
 
+  it("reads a tile the script drew, and names it by its file", async () => {
+    const { prune, setRunOutput, runCalls } = setup();
+    const rel = "overworld/r.-1.2.0123456789abcdef.png";
+    const dir = path.join(fx.cfg.scriptsDir, "common", "prune", "tiles", "overworld");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "r.-1.2.0123456789abcdef.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    setRunOutput(JSON.stringify({ ok: true, tile: rel, cached: false, chunks: 3, bytes: 4 }));
+    const tile = await prune.readPruneTile("overworld", -1, 2);
+    expect([...tile!.png]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(tile!.etag).toBe('"r.-1.2.0123456789abcdef"');
+    expect(runCalls[0]).toEqual(expect.arrayContaining(["--tile", "--dimension=overworld", "--rx=-1", "--rz=2"]));
+  });
+
+  it("answers null for a region that does not exist, and refuses a tile path that leaves the tiles folder", async () => {
+    const { prune, setRunOutput } = setup();
+    setRunOutput(JSON.stringify({ ok: false, code: "no_region" }));
+    expect(await prune.readPruneTile("overworld", 9, 9)).toBeNull();
+    setRunOutput(JSON.stringify({ ok: true, tile: "../../variables.txt" }));
+    await expect(prune.readPruneTile("overworld", 0, 0)).rejects.toBeInstanceOf(PruneScriptError);
+  });
+
+  it("draws at most two tiles at once and lets the rest wait", async () => {
+    fx = makeFixture();
+    touch(path.join(fx.cfg.scriptsDir, PRUNE_SCRIPT));
+    let running = 0;
+    let peak = 0;
+    const release: Array<() => void> = [];
+    const run = async () => {
+      running++;
+      peak = Math.max(peak, running);
+      await new Promise<void>((resolve) => release.push(resolve));
+      running--;
+      return { output: JSON.stringify({ ok: false, code: "no_region" }), stderr: "", exitCode: 0 };
+    };
+    const prune = createPrune(fx.cfg, { run: run as never });
+    const all = Promise.all([0, 1, 2, 3, 4].map((i) => prune.readPruneTile("overworld", i, 0)));
+    await flush();
+    expect(peak).toBe(2);
+    while (release.length > 0 || running > 0) {
+      release.shift()?.();
+      await flush();
+    }
+    await all;
+    expect(peak).toBe(2);
+  });
+
   it("reports an unfinished delete from the status", async () => {
     const { prune, setRunOutput } = setup();
     setRunOutput(JSON.stringify({ ok: true, engine: "builtin", version: 1, unfinishedApply: { state: "applying", plan: "0123456789abcdef", startedAt: "2026-10-13T10:00:00Z", pid: 4 } }));
