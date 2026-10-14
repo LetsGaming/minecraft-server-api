@@ -1,12 +1,16 @@
-# Cross-repo contract: this wrapper against the real minecraft-bot.
+# Cross-repo contract: this wrapper against the real minecraft-bot. Advisory.
 #
-# The mirror of the bot's own contract job, run from this side so a change
-# here that breaks the bot fails in the PR that causes it — which is the only
-# place it is cheap to fix. The check itself lives in the bot repo
-# (scripts/e2e-wrapper-contract.mjs): it asserts the bot's expectations, so it
-# belongs with the bot, and this job simply points it at this checkout.
+# The wrapper does not depend on the bot: it is a standalone HTTP wrapper and
+# any client may consume it. The bot depends on us, and the bot's own contract
+# job (minecraft-bot .github/workflows/contract.yml, against our main and the
+# release the setup suite pins) is where a disagreement fails. A bot that has
+# not caught up with a change here is the bot's to fix, so this job never
+# fails the wrapper's CI: a failing check is reported as a warning and in the
+# job summary, so a change here that a bot release will need to follow is
+# still seen in the PR that makes it.
 #
-# It runs the bot's real serverAccess against a real instance of this wrapper,
+# The check itself lives in the bot repo (scripts/e2e-wrapper-contract.mjs):
+# it runs the bot's real serverAccess against a real instance of this wrapper,
 # because the bot casts our JSON to its own types — a field renamed here
 # type-checks on both sides and only surfaces as a remote instance quietly
 # returning undefined. `npm test` here cannot see that; this can.
@@ -77,23 +81,29 @@ jobs:
         run: npm ci && npm run build
 
       - name: Contract check
+        id: contract
+        # Advisory (see the header): the bot lagging behind does not fail us.
+        continue-on-error: true
         working-directory: bot
         env:
           WRAPPER_DIR: ${{ github.workspace }}/api-wrapper
           E2E_DUMP_WRAPPER_LOG: "1"
         run: |
-          # The check lives in the bot repo, so this job depends on the bot
-          # having landed its half. Say that, rather than letting npm report
-          # a bare "Missing script" that looks like a broken workflow.
           if ! node -e "process.exit(require('./package.json').scripts['e2e:contract'] ? 0 : 1)"; then
-            echo "::error::${BOT_REPO}@${BOT_REF} has no 'e2e:contract' script."
-            echo "The contract check lives in the bot repo — it asserts the bot's expectations of us."
-            echo "Land the bot's half first; this job goes green once that script exists on its default branch."
+            echo "${BOT_REPO}@${BOT_REF} has no 'e2e:contract' script; nothing to check against."
             exit 1
           fi
-          # A wrapper feature the bot does not consume yet is reported as a
-          # note, not a failure: additive features are meant to land here
-          # first, and nothing calls those routes until the bot half ships.
-          # This job fails only when the bot on its default branch expects
-          # something this wrapper cannot serve.
           npm run e2e:contract
+
+      - name: Report a bot that has not caught up
+        if: steps.contract.outcome == 'failure'
+        run: |
+          msg="${BOT_REPO}@${BOT_REF} disagrees with this wrapper (see the Contract check step). The wrapper is not blocked; the bot needs a change before it can use this version."
+          echo "::warning title=bot contract::${msg}"
+          {
+            echo "### Bot contract: ${BOT_REPO}@${BOT_REF} has not caught up"
+            echo
+            echo "${msg}"
+            echo
+            echo "Advisory only. The failure blocks the bot's own CI (its contract job runs against this wrapper's main), not this one."
+          } >> "$GITHUB_STEP_SUMMARY"
