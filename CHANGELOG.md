@@ -14,6 +14,8 @@ unchanged.
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-14
+
 ### Fixed
 
 - Starting an upgrade no longer fails with a 400 when the compatibility check listed a mod name the wrapper could not look up (for example `sit!`); the list is now only checked for characters that would break the argument.
@@ -32,6 +34,8 @@ unchanged.
 - **Build protection and chunk inspection.** The scan body (and each plan's `params`) accepts `buildProtection` (`off` or `likely`, default likely: the script keeps chunks with block entities no structure explains); per dimension the summary reports `uncertain`. `GET .../prune/plans/:planId/chunk?dimension=&cx=&cz=` reads one chunk in full: status, time in use, size, block entities, structures, whether the plan deletes it and which protections cover it.
 - **Manual chunk selection for prune scans.** The scan body (and each plan's `params`) accepts `selection: { ops, allowProtected }`: ordered add/remove rectangles in chunk coordinates (at most 2,500) chosen by hand. Chosen chunks are deleted even where a soft rule keeps them; per dimension the summary reports `manualSoft`, `manualHard` and `manualBlocked` (kept: unreadable, or protected without `allowProtected`). Scan parameters now reach the script on stdin, so a large selection fits.
 - **Prune scan progress, cancel and dimensions.** `GET .../prune/scans/:jobId` carries `progress` (regions done of total, chunks, chunks per second, ETA) while a scan runs; `POST .../prune/scans/:jobId/cancel` stops it (the job then fails with `cancelled`, what it read stays cached); `GET .../prune/dimensions` lists the world's dimensions with region counts without reading a chunk, so a scan can be limited to chosen dimensions through `dimensions` in the scan body; `GET .../prune/status` reports the engine version and `unfinishedApply` when an earlier delete never finished. Feature `chunk-prune` is now version 2.
+
+- **Release tarballs.** Pushing a `v<version>` tag publishes `mc-api-server-<version>.tar.gz` (built `dist/` and what a host runs, no sources) with its `.sha256` as a GitHub Release (`.github/workflows/release.yml`, `npm run pack:release`). minecraft-server-setup installs these instead of a submodule checkout; with `SETUP_REPO_TOKEN` set the workflow opens the pin bump there.
 
 ### Changed
 

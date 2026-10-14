@@ -1,0 +1,105 @@
+# Publishes a release when a version tag is pushed (git tag v4.1.0 && git push origin v4.1.0).
+#
+# The tag must match package.json and CHANGELOG.md must have that version's
+# section. The job runs the checks, builds, packs mc-api-server-<v>.tar.gz
+# (scripts/pack-release.mjs: dist/ and what a host runs, no sources), and
+# attaches it with its .sha256 to a GitHub Release whose notes are the
+# changelog section.
+#
+# minecraft-server-setup installs the release named in its
+# api-server-release.json. With the SETUP_REPO_TOKEN secret set (a fine-grained
+# token with contents and pull-requests write on that repository), this job
+# also opens the pull request there that moves the pin to this release; its
+# Wrapper contract workflow then tests the release against the bot. Without the
+# secret the bump is done by hand (docs/wrapper-release.md in that repository).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  SETUP_REPO: LetsGaming/minecraft-server-setup
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run openapi:check
+
+      - name: Pack
+        id: pack
+        run: node scripts/pack-release.mjs --expect-version "${GITHUB_REF_NAME#v}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.pack.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "release/mc-api-server-$VERSION.tar.gz" \
+            "release/mc-api-server-$VERSION.tar.gz.sha256" \
+            --title "mc-api-server $VERSION" \
+            --notes-file release/notes.md \
+            --verify-tag
+
+      - name: Open the pin bump in minecraft-server-setup
+        env:
+          GH_TOKEN: ${{ secrets.SETUP_REPO_TOKEN }}
+          VERSION: ${{ steps.pack.outputs.version }}
+          SHA256: ${{ steps.pack.outputs.sha256 }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::SETUP_REPO_TOKEN is not set; bump api-server-release.json in $SETUP_REPO by hand."
+            exit 0
+          fi
+          branch="api-server-release-v$VERSION"
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${SETUP_REPO}.git" setup
+          cd setup
+          if [ ! -f api-server-release.json ]; then
+            echo "::notice::$SETUP_REPO has no api-server-release.json on main yet; pin $VERSION ($SHA256) by hand."
+            exit 0
+          fi
+          git checkout -b "$branch"
+          node -e '
+            const fs = require("fs");
+            const pin = JSON.parse(fs.readFileSync("api-server-release.json", "utf8"));
+            pin.version = process.env.VERSION;
+            pin.sha256 = process.env.SHA256;
+            fs.writeFileSync("api-server-release.json", JSON.stringify(pin, null, 2) + "\n");
+          '
+          if git diff --quiet; then
+            echo "::notice::$SETUP_REPO already pins $VERSION."
+            exit 0
+          fi
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git commit -am "chore: pin API wrapper $VERSION"
+          git push origin "$branch"
+          {
+            echo "Moves \`api-server-release.json\` to [mc-api-server $VERSION](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME})."
+            echo
+            echo "sha256: \`$SHA256\`"
+            echo
+            echo "## Changes in this release"
+            echo
+            cat ../release/notes.md
+          } > ../pr-body.md
+          gh pr create --repo "$SETUP_REPO" --base main --head "$branch" \
+            --title "chore: pin API wrapper $VERSION" --body-file ../pr-body.md

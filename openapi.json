@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "mc-api-server",
-    "version": "4.0.0",
+    "version": "4.1.0",
     "description": "Lightweight HTTP wrapper for managing Minecraft server instances, the\nremote backend for minecraft-bot.\n\nGenerated from the router by `npm run openapi:generate`. Do not edit by hand.\n\nEvery route except `GET /health` requires the `x-api-key` header. Every\nnon-2xx body is `{ \"error\": \"<message>\" }`. Clients negotiate by the\nfeature names and versions in `GET /manifest`, not by wrapper version."
   },
   "servers": [
