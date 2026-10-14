@@ -93,6 +93,9 @@ describe("the instance slot", () => {
     let finish: (v: unknown) => void = () => {};
     runMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
     const running = scripts.runScript("backup");
+    // runScript checks the script exists before it takes the slot, so wait
+    // until the backup is really running; otherwise stop can win the slot.
+    await vi.waitFor(() => expect(runMock).toHaveBeenCalledTimes(1));
 
     await expect(scripts.runScript("stop")).rejects.toBeInstanceOf(OperationBusyError);
     await expect(scripts.runScript("status")).resolves.toBeDefined();

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 
@@ -144,10 +144,18 @@ describe("scan progress, cancel, dimensions and status", () => {
       return { output: JSON.stringify({ ok: false, code: "no_region" }), stderr: "", exitCode: 0 };
     };
     const prune = createPrune(fx.cfg, { run: run as never });
-    const all = Promise.all([0, 1, 2, 3, 4].map((i) => prune.readPruneTile("overworld", i, 0)));
+    let settled = 0;
+    const all = Promise.all(
+      [0, 1, 2, 3, 4].map((i) => prune.readPruneTile("overworld", i, 0).finally(() => settled++)),
+    );
+    // Each tile checks the script on disk before it runs, so wait for two to
+    // be drawing rather than assuming one macrotask is enough for that I/O.
+    await vi.waitFor(() => expect(running).toBe(2));
     await flush();
     expect(peak).toBe(2);
-    while (release.length > 0 || running > 0) {
+    // Until every tile is done: one may still be checking the disk while
+    // nothing is running and nothing is waiting to be released.
+    while (settled < 5) {
       release.shift()?.();
       await flush();
     }
