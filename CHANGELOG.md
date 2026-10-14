@@ -14,6 +14,8 @@ unchanged.
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-14
+
 ### Security
 
 - **Console text can no longer run a second command through screen.** `screen -X stuff` turns `^M` and `\015` into Enter and expands `$VAR`, so a chat-bridge message or a ban reason like `hi^Mop Mallory` ran `op Mallory` on instances without RCON (and on RCON instances after an RCON error). `\`, `^` and `$` are now escaped, so the line reaches the console exactly as sent and as one line; tellraw JSON is unchanged (`src/instances/commands.ts`).
