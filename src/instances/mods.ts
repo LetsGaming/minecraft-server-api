@@ -76,9 +76,12 @@ const SCRIPT_TIMEOUTS: Record<keyof typeof SCRIPTS, number> = {
 /**
  * A slug or project id, as recorded in downloaded_versions.json. The first
  * character is alphanumeric so a slug can never read as a flag (Modrinth
- * project ids are mixed-case base62, hence both cases).
+ * project ids are mixed-case base62, hence both cases). The rest follows
+ * Modrinth's slug alphabet (e.g. `sit!`) minus the comma, which separates
+ * names in `--expect-unavailable`. Slugs reach scripts as argv elements,
+ * never through a shell, and `/` stays out so one cannot name a path.
  */
-const SLUG_RE = /^[a-zA-Z0-9][\w.-]{0,95}$/;
+const SLUG_RE = /^[a-zA-Z0-9][\w.!@$()+'"`-]{0,95}$/;
 /** A Minecraft version like 1.21.4 or 1.21. */
 const MC_VERSION_RE = /^[\w.-]{1,20}$/;
 /** A loader like fabric, forge, quilt, neoforge. */

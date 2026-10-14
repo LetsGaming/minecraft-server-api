@@ -33,19 +33,19 @@ describe("MOD_VALIDATION", () => {
   const { SLUG_RE, MC_VERSION_RE, LOADER_RE, VERSION_ID_RE } = MOD_VALIDATION;
 
   it("accepts ordinary slugs and project ids", () => {
-    for (const s of ["sodium", "fabric-api", "ae2_1.2", "AbCdEfGh"]) {
+    for (const s of ["sodium", "fabric-api", "ae2_1.2", "AbCdEfGh", "sit!", "mod(x)+'q'"]) {
       expect(SLUG_RE.test(s)).toBe(true);
     }
   });
 
   it("rejects shell and path syntax", () => {
-    for (const s of ["a b", "a/b", "a;b", "", "x".repeat(97)]) {
+    for (const s of ["a b", "a/b", "a;b", "a,b", "a\\b", "", "x".repeat(97)]) {
       expect(SLUG_RE.test(s)).toBe(false);
     }
   });
 
   it("rejects anything that could read as an option or a dot path", () => {
-    for (const s of ["--json", "-h", "--help", "-", "..", ".hidden", "_x"]) {
+    for (const s of ["--json", "-h", "--help", "-", "..", ".hidden", "_x", "!x"]) {
       expect(SLUG_RE.test(s)).toBe(false);
     }
   });

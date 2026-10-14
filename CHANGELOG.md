@@ -17,6 +17,7 @@ unchanged.
 ### Fixed
 
 - Starting an upgrade no longer fails with a 400 when the compatibility check listed a mod name the wrapper could not look up (for example `sit!`); the list is now only checked for characters that would break the argument.
+- Mod slugs with Modrinth's other allowed characters (for example `sit!`) are accepted. The compatibility check used to reject them, report the mod as unknown and so make the following upgrade fail with `mods_changed`; adding, removing, updating and toggling such a mod was refused with a 400 too.
 - The wrapper writes `api-server.log` in its `logs/` folder (`MC_LOG_DIR` to move it, empty to turn it off), rotated at 5 MB with three files kept. Under systemd the folder stayed empty because everything went to the journal only.
 
 ### Added
