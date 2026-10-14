@@ -17,6 +17,22 @@ unchanged.
 ### Security
 
 - **Console text can no longer run a second command through screen.** `screen -X stuff` turns `^M` and `\015` into Enter and expands `$VAR`, so a chat-bridge message or a ban reason like `hi^Mop Mallory` ran `op Mallory` on instances without RCON (and on RCON instances after an RCON error). `\`, `^` and `$` are now escaped, so the line reaches the console exactly as sent and as one line; tellraw JSON is unchanged (`src/instances/commands.ts`).
+- **The config editor hides credentials and guards server settings.** Values whose key looks like a credential (`rcon.password`, a plugin's bot token or database password) come back redacted and keep their real value when sent back unchanged. Changing protected `server.properties` keys (RCON, `online-mode`, whitelist switches, permission levels, `level-name`, ports, `management-server-*`) needs `allowProtected: true`, also on a revert. Feature `mod-configs` is version 2 (`src/instances/configSecrets.ts`, `src/instances/configFiles.ts`).
+- **A planted symlink no longer redirects the wrapper's file access.** Config files and their snapshots, the log tail and live stream, the lifecycle events, prune tiles and maps and backup downloads are opened without following a final symlink; config roots must lie inside the server directory and the snapshot directory must be a plain directory. Code running as the instance user could otherwise make the wrapper read or overwrite its own config (`src/platform/safeFs.ts`).
+- **Script arguments can only carry the flags their action takes** (`backup --archive`), and `mcVersion` must start with a letter or digit, so `--prune-only` can no longer pass as a version (`src/http/validation.ts`, `src/instances/mods.ts`).
+- **Release workflow:** dependencies, lint and tests run with a read-only token in their own job; publishing runs separately, attests the tarball's provenance and refuses a tag that is not on `main`. Actions are pinned by commit, workflows default to read-only tokens without persisted credentials, and the contract job no longer puts its `bot_ref` input into shell text (`.github/workflows/`).
+- The documented `screen` sudoers rules are narrowed to `stuff` into the instance's own session and `-list`; a bare `/usr/bin/screen` grant allowed a shell as the instance user (`docs/sudoers-setup.md`).
+- `api-server-config.json` (API key, RCON passwords) is gitignored.
+
+### Changed
+
+- **Config reverts require `If-Match`** like writes, and writes to one file are serialized, so two editors with the same version can no longer both succeed. Writes replace the contents without leaving the file empty or half-written (`src/instances/configFiles.ts`).
+- **Upgrade and prune jobs survive a wrapper restart.** Their output goes to files under `MC_STATE_DIR` (default `./state`) instead of pipes, so the job no longer dies of SIGPIPE when the wrapper stops; the next wrapper keeps the instance busy until the job ends and reports it as running. PM2's ecosystem file sets `treekill: false`; a systemd unit needs `KillMode=process` (`src/platform/spawn.ts`, `src/instances/upgrades.ts`).
+- Backup deletes are refused with 423 while an operation runs, and a restore checks that the server is offline while already holding the instance, so nothing can start it in between (`src/instances/operations.ts`, `src/http/routes/instance/backups.ts`).
+- A timed-out script or job keeps the instance busy until its process has exited or SIGKILL's grace has passed, instead of freeing it while tar or java may still be writing (`src/platform/spawn.ts`).
+- Backup downloads take their size from the open file, carry an `ETag` and honour `If-Range`, so a resumed download of a replaced archive restarts instead of splicing two files (`src/http/routes/instance/backups.ts`).
+- The config file is checked harder at startup: `apiKey` must be a string, `port` a number from 1 to 65535, and instance ids may use letters, digits, `_` and `-` only.
+- The wrapper logs unhandled rejections instead of dying of them, writes its log file asynchronously and logs 429s at most once per 10 seconds with a count (`src/index.ts`, `src/platform/logger.ts`).
 
 ### Fixed
 
@@ -24,6 +40,12 @@ unchanged.
 - **A long RCON reply no longer jams RCON.** Replies of a full 4096 bytes were rejected but left in the buffer, so every later command timed out. They are accepted now, and a stream that really is out of step drops the connection and reconnects (`src/platform/rcon/packet.ts`, `src/platform/rcon/client.ts`).
 - **A command whose RCON reply went missing is not sent again through screen.** The server has usually run it already, so the fallback ran it twice. It is reported as sent with no reply (`via: "rcon"`, `result: null`, `rconError`) instead (`src/instances/commands.ts`).
 - **`/list` no longer reports zero players while people are online.** A health probe inside the "recent RCON success" window skipped `list` and had no roster to show; it now reuses a roster only as recent as that window and asks for one otherwise (`src/instances/health.ts`).
+- A command whose RCON connection dropped after it was sent is not re-sent through screen either.
+- Requests that match no route are counted under one `<unmatched>` metrics key; before, every distinct URL added a key forever (`src/http/app.ts`).
+- Saving a large manual prune selection no longer fails: parameters over 64 KB go to the script on stdin (`src/instances/prune.ts`).
+- A mod, backup or stats listing loaded just before a change is no longer cached as fresh after it (`src/platform/cache.ts`).
+- The live log stream notices a rotated `latest.log` that has already grown past the old size; one oversized line no longer stalls the lifecycle event cursor.
+- The liveness probe no longer spends 250 ms sampling CPU it does not report.
 
 ## [4.1.0] - 2026-10-14
 
