@@ -83,7 +83,9 @@ const SCRIPT_TIMEOUTS: Record<keyof typeof SCRIPTS, number> = {
  */
 const SLUG_RE = /^[a-zA-Z0-9][\w.!@$()+'"`-]{0,95}$/;
 /** A Minecraft version like 1.21.4 or 1.21. */
-const MC_VERSION_RE = /^[\w.-]{1,20}$/;
+// W-013: must start with a letter or digit. The version is a positional
+// argument to upgrade.sh, and `--prune-only` passed this check before.
+const MC_VERSION_RE = /^[A-Za-z0-9][\w.-]{0,19}$/;
 /** A loader like fabric, forge, quilt, neoforge. */
 const LOADER_RE = /^[a-z]{1,20}$/;
 /** A Modrinth version id, e.g. "AbCdEfGh". */

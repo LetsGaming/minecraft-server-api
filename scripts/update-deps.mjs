@@ -6,6 +6,8 @@ import path from "path";
  * CONFIGURATION
  */
 const DEV_CHECK_DURATION = 10000;
+/** Pinned so this script runs a known npm-check-updates, not whatever is latest today. */
+const NCU_VERSION = "23.1.0";
 const IGNORE_DIRS = [
   "node_modules",
   ".git",
@@ -318,7 +320,7 @@ async function updateProject(fullPath) {
   try {
     // 1. Update Dependencies
     log.info("Updating dependencies...");
-    if (!runSync("npx npm-check-updates -u --peer", fullPath)) {
+    if (!runSync(`npx --yes npm-check-updates@${NCU_VERSION} -u --peer`, fullPath)) {
       throw new Error("NCU failed.");
     }
 

@@ -19,11 +19,14 @@ function build(opts: {
   cached?: ServerState;
   found?: boolean;
 }) {
-  const restore = vi.fn(async (_abs: string) => ({
-    output: "done",
-    stderr: "",
-    exitCode: 0,
-  }));
+  // Mirrors instances/restore.ts: the offline probe runs inside the slot,
+  // before the script; `ran` says whether the script would have started.
+  const ran = vi.fn();
+  const restore = vi.fn(async (_abs: string, beforeRun?: () => Promise<void>) => {
+    await beforeRun?.();
+    ran();
+    return { output: "done", stderr: "", exitCode: 0 };
+  });
   const entry = {
     getHealth: vi.fn(async () => ({ state: opts.cached ?? "offline" })),
     getFreshHealth: vi.fn(async () => {
@@ -44,7 +47,7 @@ function build(opts: {
     }
     return entry;
   });
-  return { app, restore };
+  return { app, restore: ran, restoreCall: restore };
 }
 
 describe("restore route online guard", () => {
@@ -63,10 +66,10 @@ describe("restore route online guard", () => {
   );
 
   it("runs the restore with the resolved absolute path when offline", async () => {
-    const { app, restore } = build({ state: "offline" });
+    const { app, restoreCall } = build({ state: "offline" });
     const res = await app.inject({ method: "POST", url: RESTORE_URL });
     expect(res.statusCode).toBe(200);
-    expect(restore).toHaveBeenCalledWith("/backups/hourly/a.tar.zst");
+    expect(restoreCall).toHaveBeenCalledWith("/backups/hourly/a.tar.zst", expect.any(Function));
   });
 
   it("still 404s an unknown archive before probing health", async () => {

@@ -35,6 +35,10 @@ import {
 
 const FILE_ID_RE = /^[A-Za-z0-9_-]{22}$/;
 
+function protectedError(keys: readonly string[]): string {
+  return `Changing ${keys.join(", ")} needs allowProtected`;
+}
+
 export function registerConfigFileRoutes(
   app: FastifyInstance,
   resolve: ResolveInstance,
@@ -92,7 +96,7 @@ export function registerConfigFileRoutes(
 
   app.put<{
     Params: InstanceParams & { fileId: string };
-    Body: { text?: unknown };
+    Body: { text?: unknown; allowProtected?: unknown };
   }>(`${P}/configs/:fileId`,
     // JSON escaping can roughly double a text of MAX_CONFIG_BYTES, so the
     // route accepts that much; the writer enforces the real limit on the text.
@@ -108,7 +112,7 @@ export function registerConfigFileRoutes(
         "if-match": { description: "The etag of the version being replaced.", required: true },
       },
       requestBody: { required: true, schema: ConfigWriteRequest },
-      response: { 200: ConfigFileWritten, ...errors(400, 404, 412, 413, 428, 500) },
+      response: { 200: ConfigFileWritten, ...errors(400, 403, 404, 412, 413, 428, 500) },
     } }, async (req, reply) => {
     const entry = resolve(req.params.id, reply);
     if (!entry) return;
@@ -132,6 +136,7 @@ export function registerConfigFileRoutes(
         req.params.fileId,
         req.body.text,
         ifMatch,
+        { allowProtected: req.body.allowProtected === true },
       );
       if (!result.ok) {
         if (result.reason === "not-found") {
@@ -139,6 +144,14 @@ export function registerConfigFileRoutes(
         }
         if (result.reason === "too-large") {
           return reply.status(413).send({ error: "Config file is too large" });
+        }
+        if (result.reason === "redacted") {
+          return reply.status(400).send({
+            error: "A redacted secret was moved or edited around; send its line back unchanged or replace the whole value",
+          });
+        }
+        if (result.reason === "protected") {
+          return reply.status(403).send({ error: protectedError(result.keys) });
         }
         return reply
           .status(412)
@@ -152,14 +165,17 @@ export function registerConfigFileRoutes(
 
   app.post<{
     Params: InstanceParams & { fileId: string };
-    Body: { snapshot?: unknown };
+    Body: { snapshot?: unknown; allowProtected?: unknown };
   }>(`${P}/configs/:fileId/revert`,
     { schema: {
       summary: "Restore a file from one of its snapshots",
       tags: ["configs"],
       params: instanceParams({ fileId: "Opaque id from the config index." }),
+      requestHeaders: {
+        "if-match": { description: "The etag of the version being replaced.", required: true },
+      },
       requestBody: { required: true, schema: ConfigRevertRequest },
-      response: { 200: ConfigFileReverted, ...errors(400, 404, 500) },
+      response: { 200: ConfigFileReverted, ...errors(400, 403, 404, 412, 428, 500) },
     } }, async (req, reply) => {
     const entry = resolve(req.params.id, reply);
     if (!entry) return;
@@ -170,12 +186,27 @@ export function registerConfigFileRoutes(
       return reply.status(400).send({ error: "Body must be { snapshot: string }" });
     }
 
+    // W-011: a revert replaces the whole file, so it carries the same proof
+    // as a write that the caller saw what it is replacing.
+    const ifMatch = req.headers["if-match"];
+    if (typeof ifMatch !== "string" || ifMatch === "") {
+      return reply.status(428).send({ error: "If-Match header is required" });
+    }
+
     try {
       const result = await entry.revertConfigFile(
         req.params.fileId,
         req.body.snapshot,
+        ifMatch,
+        { allowProtected: req.body.allowProtected === true },
       );
       if (!result.ok) {
+        if (result.reason === "conflict") {
+          return reply.status(412).send({ error: "The file changed since you loaded it" });
+        }
+        if (result.reason === "protected") {
+          return reply.status(403).send({ error: protectedError(result.keys) });
+        }
         return reply.status(404).send({ error: `Cannot revert: ${result.reason}` });
       }
       return { etag: result.etag };

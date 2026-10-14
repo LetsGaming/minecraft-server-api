@@ -6,7 +6,7 @@
  */
 import net from "net";
 
-import { decodePkt, encodePkt } from "./packet.js";
+import { decodePkt, encodePkt, type RconPacket } from "./packet.js";
 import { recordRconReconnect } from "../metrics.js";
 
 /**
@@ -18,6 +18,18 @@ import { recordRconReconnect } from "../metrics.js";
 const RECONNECT_COOLDOWN_MS = 2_000;
 
 const AUTH_TIMEOUT_MS = 10_000;
+
+/**
+ * The command was written to the socket but no usable reply came back. The
+ * server may well have run it, so a caller must not send it again another
+ * way (W-005).
+ */
+export class RconNoReplyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RconNoReplyError";
+  }
+}
 
 // ── RconClient ────────────────────────────────────────────────────────────
 
@@ -75,9 +87,11 @@ export class RconClient {
       this._socket.destroy();
       this._socket = null;
     }
+    // W-005: these commands were already written; the server may have run
+    // them, so they must not be sent again another way.
     for (const [, cb] of this._pending) {
       clearTimeout(cb.timer);
-      cb.reject(new Error("RCON lost"));
+      cb.reject(new RconNoReplyError("RCON lost"));
     }
     this._pending.clear();
     this._buf = Buffer.alloc(0);
@@ -141,7 +155,21 @@ export class RconClient {
       socket.on("data", (data) => {
         this._buf = Buffer.concat([this._buf, data]);
         for (;;) {
-          const pkt = decodePkt(this._buf);
+          let pkt: RconPacket | null;
+          try {
+            pkt = decodePkt(this._buf);
+          } catch (err) {
+            // W-003: the stream is out of step and nothing after this point
+            // can be trusted. Commands already sent may have run.
+            const reason = err instanceof Error ? err.message : String(err);
+            for (const [, cb] of this._pending) {
+              clearTimeout(cb.timer);
+              cb.reject(new RconNoReplyError(reason));
+            }
+            this._pending.clear();
+            this._cleanup();
+            return;
+          }
           if (!pkt) break;
           this._buf = this._buf.subarray(pkt.totalSize);
 
@@ -198,10 +226,17 @@ export class RconClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this._pending.delete(id);
-        reject(new Error("RCON timeout"));
+        reject(new RconNoReplyError("RCON timeout"));
       }, timeoutMs);
+      const socket = this._socket;
+      if (!socket || socket.destroyed) {
+        // Lost between auth and now: nothing was written, a fallback is safe.
+        clearTimeout(timer);
+        reject(new Error("RCON lost before send"));
+        return;
+      }
       this._pending.set(id, { resolve, reject, timer });
-      this._socket?.write(encodePkt(id, 2, command));
+      socket.write(encodePkt(id, 2, command));
     });
   }
 }

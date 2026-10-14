@@ -8,8 +8,8 @@
  * one; see instances/backupFiles.ts for why that is structural rather than a
  * validation rule.
  */
-import { createReadStream } from "fs";
 import type { FastifyInstance } from "fastify";
+import type { FileHandle } from "fs/promises";
 
 import type { ServerState } from "../../../contracts/wire.js";
 import {
@@ -23,6 +23,7 @@ import {
   queryParams,
 } from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
+import { openNoFollow } from "../../../platform/safeFs.js";
 import {
   INSTANCE_PREFIX as P,
   type InstanceParams,
@@ -35,6 +36,16 @@ const FILE_ID_RE = /^[A-Za-z0-9_-]{22}$/;
 const DEFAULT_PAGE = 50;
 
 /** Parse a Range header of the form `bytes=start-[end]`. */
+/** The restore was refused before it ran; carries the reply to send. */
+class RestoreRefused extends Error {
+  constructor(
+    readonly status: 409 | 503,
+    readonly body: { error: string; state?: ServerState },
+  ) {
+    super(body.error);
+  }
+}
+
 function parseRange(
   header: string | undefined,
   size: number,
@@ -106,6 +117,12 @@ export function registerBackupFileRoutes(
       params: instanceParams({ fileId: "Opaque id from the backup index." }),
       requestHeaders: {
         range: { description: "`bytes=start-[end]` or `bytes=-suffix`.", required: false },
+        "if-range": {
+          description:
+            "The ETag of the partial download being resumed. A Range is honoured " +
+            "only while it still names the same file; otherwise the whole file is sent.",
+          required: false,
+        },
       },
       produces: { 200: "application/octet-stream", 206: "application/octet-stream" },
       response: {
@@ -128,12 +145,31 @@ export function registerBackupFileRoutes(
       if (!found) return reply.status(404).send({ error: "Backup not found" });
 
       const { absPath, info } = found;
-      const range = parseRange(req.headers.range, info.sizeBytes);
+      // W-007/W-018: open once, without following a link planted after the
+      // check, and take the size from the open file rather than the index,
+      // which can be minutes old (a replaced or still-growing archive would
+      // otherwise go out silently truncated).
+      let fh: FileHandle;
+      try {
+        fh = await openNoFollow(absPath);
+      } catch {
+        return reply.status(404).send({ error: "Backup not found" });
+      }
+      const stat = await fh.stat();
+      const size = stat.size;
+      const etag = `"${size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+      // A resume against a different file would splice two archives together.
+      const ifRange = req.headers["if-range"];
+      const rangeHeader =
+        typeof ifRange === "string" && ifRange !== etag ? undefined : req.headers.range;
+      const range = parseRange(rangeHeader, size);
 
       if (range === "unsatisfiable") {
+        await fh.close();
         return reply
           .status(416)
-          .header("content-range", `bytes */${info.sizeBytes}`)
+          .header("content-range", `bytes */${size}`)
+          .header("etag", etag)
           .send({ error: "Requested range not satisfiable" });
       }
 
@@ -147,7 +183,8 @@ export function registerBackupFileRoutes(
         // Range support is not a nicety here: these archives run to gigabytes
         // and get pulled over links that drop. Without it an interrupted
         // download restarts from zero.
-        .header("accept-ranges", "bytes");
+        .header("accept-ranges", "bytes")
+        .header("etag", etag);
 
       if (range) {
         void reply
@@ -155,19 +192,17 @@ export function registerBackupFileRoutes(
           .header("content-length", String(range.end - range.start + 1))
           .header(
             "content-range",
-            `bytes ${range.start}-${range.end}/${info.sizeBytes}`,
+            `bytes ${range.start}-${range.end}/${size}`,
           );
-        return reply.send(
-          createReadStream(absPath, { start: range.start, end: range.end }),
-        );
+        return reply.send(fh.createReadStream({ start: range.start, end: range.end }));
       }
 
       // Content-Length lets the browser draw its own progress bar, which is
       // why this route does not need one of its own.
-      void reply.header("content-length", String(info.sizeBytes));
+      void reply.header("content-length", String(size));
       // Streamed, never buffered: reading a multi-gigabyte archive into memory
       // to hand it over would take the wrapper down on the first big world.
-      return reply.send(createReadStream(absPath));
+      return reply.send(fh.createReadStream());
     },
   );
 
@@ -177,7 +212,7 @@ export function registerBackupFileRoutes(
       summary: "Delete one archive",
       tags: ["backups"],
       params: instanceParams({ fileId: "Opaque id from the backup index." }),
-      response: { 200: BackupFileDeleted, ...errors(400, 404, 500) },
+      response: { 200: BackupFileDeleted, ...errors(400, 404, 423, 500) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
@@ -208,7 +243,7 @@ export function registerBackupFileRoutes(
         "and exit code.",
       tags: ["backups"],
       params: instanceParams({ fileId: "Opaque id from the backup index." }),
-      response: { 200: ScriptResult, ...errors(400, 404, 409, 500, 503) },
+      response: { 200: ScriptResult, ...errors(400, 404, 409, 423, 500, 503) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
@@ -226,27 +261,32 @@ export function registerBackupFileRoutes(
         // the only state that proves no JVM holds the files; an unresponsive
         // server is still a running one.
         // The cached health answer can be seconds stale, so this asks for a
-        // probe made now, and refuses when none can be completed.
-        let state: ServerState;
-        try {
-          ({ state } = await entry.getFreshHealth());
-        } catch {
-          return reply.status(503).send({
-            error: "Could not verify that the server is offline. Try again shortly.",
-          });
-        }
-        if (state !== "offline") {
-          return reply.status(409).send({
-            error: "Server must be offline to restore a backup. Stop it first.",
-            state,
-          });
-        }
+        // probe made now, and refuses when none can be completed. It runs
+        // holding the slot (W-008), so nothing can start the server between
+        // the probe and the restore.
+        const ensureOffline = async (): Promise<void> => {
+          let state: ServerState;
+          try {
+            ({ state } = await entry.getFreshHealth());
+          } catch {
+            throw new RestoreRefused(503, {
+              error: "Could not verify that the server is offline. Try again shortly.",
+            });
+          }
+          if (state !== "offline") {
+            throw new RestoreRefused(409, {
+              error: "Server must be offline to restore a backup. Stop it first.",
+              state,
+            });
+          }
+        };
 
         // The path handed to the script is the one the wrapper resolved, never
         // one the client described. That is the whole reason restore is not a
         // /scripts/run action (see instances/restore.ts).
-        return await entry.restore(found.absPath);
+        return await entry.restore(found.absPath, ensureOffline);
       } catch (err) {
+        if (err instanceof RestoreRefused) return reply.status(err.status).send(err.body);
         return internalError(reply, `backups/restore ${req.params.id}`, err);
       }
     },

@@ -13,12 +13,28 @@ export const UUID_RE =
 // legitimately need a path argument should receive it via instance config.
 const SAFE_ARG = /^[\w.@-]{1,128}$/;
 
-export function validateArgs(args: unknown): args is string[] | undefined {
+/**
+ * W-014: the flags each script action may receive. Anything else that starts
+ * with `-` is refused, so a client cannot switch a script into a mode its
+ * action was not meant to have (`--file`, `--y`). The bot sends `--archive`
+ * for an archived backup and nothing else.
+ */
+const ALLOWED_FLAGS: Readonly<Record<string, readonly string[]>> = {
+  backup: ["--archive"],
+};
+
+export function validateArgs(args: unknown, action?: string): args is string[] | undefined {
   if (args === undefined || args === null) return true;
+  const flags = (action !== undefined && Object.hasOwn(ALLOWED_FLAGS, action) ? ALLOWED_FLAGS[action] : undefined) ?? [];
   return (
     Array.isArray(args) &&
     args.length <= 5 &&
-    args.every((a) => typeof a === "string" && SAFE_ARG.test(a))
+    args.every(
+      (a) =>
+        typeof a === "string" &&
+        SAFE_ARG.test(a) &&
+        (!a.startsWith("-") || flags.includes(a)),
+    )
   );
 }
 

@@ -5,16 +5,26 @@
 import { execFile } from "child_process";
 
 import { log } from "../platform/logger.js";
-import type { RconClient } from "../platform/rcon/client.js";
+import { RconNoReplyError, type RconClient } from "../platform/rcon/client.js";
 import type { InstanceConfig } from "../config/types.js";
 
 /**
- * A-01: strip CR, LF, and all other control characters before handing a
- * string to `screen stuff`. A command containing \r would be interpreted
- * by screen as multiple key-presses. Exported for direct testing.
+ * Make a console line safe for `screen -X stuff`. Exported for direct testing.
+ *
+ * A-01: strip CR, LF and every other control character, which screen would
+ * type as separate key-presses.
+ *
+ * W-001: `stuff` also processes its own escapes: `^M` and `\015` become
+ * Enter, and `$VAR` / `${VAR}` expand from screen's environment. Stripping
+ * real control characters does nothing about those, so `say hi^Mop Mallory`
+ * ran a second command. Prefixing `\`, `^` and `$` with a backslash makes
+ * screen type each one literally, so the line arrives exactly as sent
+ * (tellraw JSON with `\"` included) and is always one line.
  */
 export function sanitizeScreenCommand(command: string): string {
-  return command.replace(/[\r\n\x00-\x1f\x7f]/g, "");
+  return command
+    .replace(/[\r\n\x00-\x1f\x7f]/g, "")
+    .replace(/[\\^$]/g, (c) => `\\${c}`);
 }
 
 export interface CommandDispatch {
@@ -51,6 +61,13 @@ export function createCommands(cfg: InstanceConfig, rcon: RconClient | null) {
           0,
           RCON_ERROR_MAX,
         );
+        // W-005: RCON took the command and only the reply went missing, so
+        // the server has probably run it. Sending it again through screen
+        // would run it twice (a second `give`, a second ban), so report it
+        // as sent without a reply instead.
+        if (err instanceof RconNoReplyError) {
+          return { result: null, via: "rcon", sent: true, rconError };
+        }
       }
     }
     const formatted = command.startsWith("/") ? command : `/${command}`;

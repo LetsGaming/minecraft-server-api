@@ -18,12 +18,18 @@
  * made. Every write copies the previous contents aside first, so a bad edit is
  * one click away from being undone rather than a restore from backup.
  */
-import { createHash } from "crypto";
-import type { Dirent } from "fs";
+import { createHash, randomBytes } from "crypto";
+import { constants, type Dirent } from "fs";
 import fsp from "fs/promises";
 import path from "path";
 
 import type { InstanceConfig } from "../config/types.js";
+import { isInside, openNoFollow } from "../platform/safeFs.js";
+import {
+  changedProtectedKeys,
+  redactSecrets,
+  restoreSecrets,
+} from "./configSecrets.js";
 
 /**
  * Directories a config file may live in, relative to the server directory.
@@ -94,6 +100,14 @@ const UTF8_BOM = "﻿";
 /** Snapshots kept per file before a write. */
 const MAX_SNAPSHOTS = 10;
 
+export interface WriteOptions {
+  /**
+   * May protected `server.properties` keys change (W-006)? The bot sends
+   * this for sysadmins only.
+   */
+  allowProtected?: boolean;
+}
+
 export interface ConfigFileInfo {
   /** Opaque handle; the only file reference a client may send back. */
   id: string;
@@ -107,6 +121,61 @@ export interface ConfigFileInfo {
   tooLarge: boolean;
   sizeBytes: number;
   mtimeMs: number;
+}
+
+/** Read a config file without following a final symlink (W-007, see safeFs.ts). */
+async function readNoFollow(absPath: string): Promise<string> {
+  const fh = await openNoFollow(absPath);
+  try {
+    return await fh.readFile("utf-8");
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Replace a file's contents (W-011). When the file is ours, the new text goes
+ * to a temp file that is synced and renamed over it, so a reader or a crash
+ * sees the old file or the new one, never half of one. A file owned by the
+ * instance user can't be replaced that way without handing it to `apiuser`
+ * (the server could no longer save it), so it is overwritten in place: the
+ * new text is written over the old before the length is cut, which never
+ * leaves it empty, and synced.
+ */
+async function replaceContents(absPath: string, text: string): Promise<void> {
+  const fh = await fsp.open(absPath, constants.O_RDWR | constants.O_NOFOLLOW);
+  let replaced = false;
+  try {
+    const stat = await fh.stat();
+    if (!stat.isFile()) throw new Error("not a regular file");
+    if (typeof process.getuid === "function" && stat.uid === process.getuid()) {
+      const tmp = path.join(
+        path.dirname(absPath),
+        `.${path.basename(absPath)}.${randomBytes(6).toString("hex")}.tmp`,
+      );
+      try {
+        const out = await fsp.open(tmp, "wx", stat.mode & 0o7777);
+        try {
+          await out.writeFile(text, "utf-8");
+          await out.sync();
+        } finally {
+          await out.close();
+        }
+        await fsp.rename(tmp, absPath);
+        replaced = true;
+      } catch {
+        await fsp.rm(tmp, { force: true }).catch(() => {});
+      }
+    }
+    if (!replaced) {
+      const data = Buffer.from(text, "utf-8");
+      await fh.write(data, 0, data.length, 0);
+      await fh.truncate(data.length);
+      await fh.sync();
+    }
+  } finally {
+    await fh.close();
+  }
 }
 
 export interface ConfigIndex {
@@ -162,6 +231,19 @@ export function guessModId(relPath: string): string {
 export function createConfigFiles(cfg: InstanceConfig) {
   const serverPath = cfg.serverPath;
 
+  /** One write or revert per file at a time (W-011). */
+  const fileLocks = new Map<string, Promise<unknown>>();
+  function withFileLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const prev = fileLocks.get(id) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    const tail = run.catch(() => {});
+    fileLocks.set(id, tail);
+    void tail.then(() => {
+      if (fileLocks.get(id) === tail) fileLocks.delete(id);
+    });
+    return run;
+  }
+
   /** The config root a listed path lives under, or "" for a top-level file. */
   function rootOf(relPath: string): string {
     return CONFIG_ROOTS.find((r) => relPath.startsWith(`${r}/`)) ?? "";
@@ -178,6 +260,9 @@ export function createConfigFiles(cfg: InstanceConfig) {
     let realRoot: string;
     try {
       realRoot = await fsp.realpath(path.join(serverPath, root));
+      // W-007: a root that is itself a link out of the server directory
+      // (`plugins` -> the wrapper's own folder) is not a root at all.
+      if (!isInside(realRoot, await fsp.realpath(serverPath))) return [];
     } catch {
       return []; // root not present on this instance
     }
@@ -319,11 +404,12 @@ export function createConfigFiles(cfg: InstanceConfig) {
     const root = rootOf(info.relPath);
     try {
       const realFile = await fsp.realpath(absPath);
+      const realServer = await fsp.realpath(serverPath);
       if (root === "") {
-        const realServer = await fsp.realpath(serverPath);
         if (realFile !== path.join(realServer, info.relPath)) return null;
       } else {
         const realRoot = await fsp.realpath(path.join(serverPath, root));
+        if (!isInside(realRoot, realServer)) return null; // W-007
         if (!realFile.startsWith(realRoot + path.sep)) return null;
       }
       return { absPath: realFile, info };
@@ -347,21 +433,57 @@ export function createConfigFiles(cfg: InstanceConfig) {
     const found = await resolve(id);
     if (!found) return null;
     if (found.info.tooLarge) return { tooLarge: true as const, info: found.info };
-    const { text } = stripBom(await fsp.readFile(found.absPath, "utf-8"));
-    return { text, etag: etagOf(text), info: found.info };
+    const { text } = stripBom(await readNoFollow(found.absPath));
+    // The etag is over the real contents; the client sees secrets redacted
+    // (W-006) and gets them restored when it writes the text back.
+    return { text: redactSecrets(text), etag: etagOf(text), info: found.info };
   }
 
   function snapshotDir(id: string): string {
     return path.join(cfg.serverPath, ".mcbot-config-snapshots", id);
   }
 
+  /**
+   * Create `dir` if missing and prove it is a real directory inside the
+   * server directory, not a symlink planted to redirect our writes and the
+   * pruning `rm` below somewhere `apiuser` can write (W-007).
+   */
+  async function ensureRealDir(dir: string): Promise<void> {
+    try {
+      await fsp.mkdir(dir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+    const st = await fsp.lstat(dir);
+    if (!st.isDirectory() || st.isSymbolicLink()) {
+      throw new Error(`snapshot directory is not a plain directory: ${dir}`);
+    }
+    const realServer = await fsp.realpath(serverPath);
+    if (!isInside(await fsp.realpath(dir), realServer)) {
+      throw new Error(`snapshot directory leaves the server directory: ${dir}`);
+    }
+  }
+
   async function snapshot(id: string, text: string): Promise<string> {
     const dir = snapshotDir(id);
-    await fsp.mkdir(dir, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    await fsp.writeFile(path.join(dir, stamp), text, "utf-8");
+    await ensureRealDir(path.dirname(dir));
+    await ensureRealDir(dir);
+    const base = new Date().toISOString().replace(/[:.]/g, "-");
+    // `wx` refuses an existing name, so a planted link is never written
+    // through. Two snapshots in one millisecond get a numeric suffix.
+    let stamp = base;
+    for (let i = 1; ; i++) {
+      try {
+        await fsp.writeFile(path.join(dir, stamp), text, { encoding: "utf-8", flag: "wx" });
+        break;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST" || i > 50) throw err;
+        stamp = `${base}-${i}`;
+      }
+    }
 
-    // Keep the last N, oldest pruned. Timestamps sort lexically.
+    // Keep the last N, oldest pruned. Timestamps sort lexically. rm on a
+    // link removes the link, never what it points at.
     const kept = (await fsp.readdir(dir)).sort();
     for (const old of kept.slice(0, Math.max(0, kept.length - MAX_SNAPSHOTS))) {
       await fsp.rm(path.join(dir, old), { force: true });
@@ -378,33 +500,53 @@ export function createConfigFiles(cfg: InstanceConfig) {
    * server was running can land on top of a file the game has since replaced.
    * A UTF-8 BOM is hidden from the client and restored on write.
    */
+  /**
+   * W-006: a change to a protected `server.properties` key needs the
+   * caller's explicit say-so. Returns the keys that block the write.
+   */
+  function blockedKeys(
+    relPath: string,
+    before: string,
+    after: string,
+    allowProtected: boolean,
+  ): string[] {
+    if (allowProtected || relPath !== "server.properties") return [];
+    return changedProtectedKeys(before, after);
+  }
+
   async function write(
     id: string,
-    text: string,
+    submitted: string,
     ifMatch: string,
+    { allowProtected = false }: WriteOptions = {},
   ): Promise<
     | { ok: true; etag: string; snapshot: string }
-    | { ok: false; reason: "not-found" | "conflict" | "too-large" }
+    | { ok: false; reason: "not-found" | "conflict" | "too-large" | "redacted" }
+    | { ok: false; reason: "protected"; keys: string[] }
   > {
-    if (Buffer.byteLength(text, "utf-8") > MAX_CONFIG_BYTES) {
+    if (Buffer.byteLength(submitted, "utf-8") > MAX_CONFIG_BYTES) {
       return { ok: false, reason: "too-large" };
     }
-    const found = await resolve(id);
-    if (!found) return { ok: false, reason: "not-found" };
-    if (found.info.tooLarge) return { ok: false, reason: "too-large" };
+    return withFileLock(id, async () => {
+      const found = await resolve(id);
+      if (!found) return { ok: false as const, reason: "not-found" as const };
+      if (found.info.tooLarge) return { ok: false as const, reason: "too-large" as const };
 
-    const raw = await fsp.readFile(found.absPath, "utf-8");
-    const current = stripBom(raw);
-    if (etagOf(current.text) !== ifMatch) return { ok: false, reason: "conflict" };
+      const raw = await readNoFollow(found.absPath);
+      const current = stripBom(raw);
+      if (etagOf(current.text) !== ifMatch) {
+        return { ok: false as const, reason: "conflict" as const };
+      }
+      const text = restoreSecrets(submitted, current.text);
+      if (text === null) return { ok: false as const, reason: "redacted" as const };
+      const keys = blockedKeys(found.info.relPath, current.text, text, allowProtected);
+      if (keys.length > 0) return { ok: false as const, reason: "protected" as const, keys };
 
-    const stamp = await snapshot(id, raw);
-    await fsp.writeFile(
-      found.absPath,
-      current.bom ? UTF8_BOM + text : text,
-      "utf-8",
-    );
-    invalidate();
-    return { ok: true, etag: etagOf(text), snapshot: stamp };
+      const stamp = await snapshot(id, raw);
+      await replaceContents(found.absPath, current.bom ? UTF8_BOM + text : text);
+      invalidate();
+      return { ok: true as const, etag: etagOf(text), snapshot: stamp };
+    });
   }
 
   async function listSnapshots(id: string): Promise<string[]> {
@@ -418,26 +560,41 @@ export function createConfigFiles(cfg: InstanceConfig) {
   async function revert(
     id: string,
     stamp: string,
-  ): Promise<{ ok: true; etag: string } | { ok: false; reason: string }> {
+    ifMatch: string,
+    { allowProtected = false }: WriteOptions = {},
+  ): Promise<
+    | { ok: true; etag: string }
+    | { ok: false; reason: "bad-snapshot" | "not-found" | "no-such-snapshot" | "conflict" }
+    | { ok: false; reason: "protected"; keys: string[] }
+  > {
     // The stamp comes from a client, so it is validated rather than trusted.
     // it is the one string here that is not an opaque handle.
     if (!/^[\dTZ-]{1,40}$/.test(stamp)) return { ok: false, reason: "bad-snapshot" };
-    const found = await resolve(id);
-    if (!found) return { ok: false, reason: "not-found" };
+    return withFileLock(id, async () => {
+      const found = await resolve(id);
+      if (!found) return { ok: false as const, reason: "not-found" as const };
 
-    const file = path.join(snapshotDir(id), stamp);
-    let text: string;
-    try {
-      text = await fsp.readFile(file, "utf-8");
-    } catch {
-      return { ok: false, reason: "no-such-snapshot" };
-    }
+      let text: string;
+      try {
+        text = await readNoFollow(path.join(snapshotDir(id), stamp));
+      } catch {
+        return { ok: false as const, reason: "no-such-snapshot" as const };
+      }
 
-    // Reverting is itself a change worth being able to undo.
-    await snapshot(id, await fsp.readFile(found.absPath, "utf-8"));
-    await fsp.writeFile(found.absPath, text, "utf-8");
-    invalidate();
-    return { ok: true, etag: etagOf(stripBom(text).text) };
+      const raw = await readNoFollow(found.absPath);
+      const current = stripBom(raw).text;
+      // W-011: a revert replaces the whole file, so it needs the same proof
+      // as a write that the caller saw the version it is replacing.
+      if (etagOf(current) !== ifMatch) return { ok: false as const, reason: "conflict" as const };
+      const keys = blockedKeys(found.info.relPath, current, stripBom(text).text, allowProtected);
+      if (keys.length > 0) return { ok: false as const, reason: "protected" as const, keys };
+
+      // Reverting is itself a change worth being able to undo.
+      await snapshot(id, raw);
+      await replaceContents(found.absPath, text);
+      invalidate();
+      return { ok: true as const, etag: etagOf(stripBom(text).text) };
+    });
   }
 
   return { index, resolve, read, write, listSnapshots, revert };

@@ -121,10 +121,18 @@ describe("GET /operations/upgrade/:jobId and /current", () => {
   });
 
   it("404s an unknown job and 400s a malformed id or cursor", async () => {
-    const { app } = build({ getUpgrade: vi.fn(() => null) });
+    const { app } = build({ getUpgrade: vi.fn(() => null), getCurrentUpgrade: vi.fn(async () => null) });
     expect((await app.inject({ url: `/instances/survival/operations/upgrade/${JOB}` })).statusCode).toBe(404);
     expect((await app.inject({ url: "/instances/survival/operations/upgrade/not-an-id" })).statusCode).toBe(400);
     expect((await app.inject({ url: `/instances/survival/operations/upgrade/${JOB}?since=-1` })).statusCode).toBe(400);
+  });
+
+  it("finds a job recovered after a wrapper restart by its id (W-009)", async () => {
+    const recovered = { jobId: JOB, kind: "upgrade", state: "running", mcVersion: "", events: [], next: 0 };
+    const { app } = build({ getUpgrade: vi.fn(() => null), getCurrentUpgrade: vi.fn(async () => recovered) });
+    const res = await app.inject({ url: `/instances/survival/operations/upgrade/${JOB}` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ jobId: JOB, state: "running" });
   });
 
   it("current answers the latest job, or 404 when there has been none", async () => {

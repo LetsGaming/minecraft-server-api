@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { encodePkt, decodePkt } from "../../src/platform/rcon/packet.js";
+import {
+  encodePkt,
+  decodePkt,
+  RconFramingError,
+} from "../../src/platform/rcon/packet.js";
 
 describe("RCON packet encoding", () => {
   it("round-trips a command packet", () => {
@@ -23,22 +27,22 @@ describe("RCON packet encoding", () => {
   });
 });
 
-describe("decodePkt hostile input (A-09)", () => {
-  it("rejects a negative length field", () => {
+describe("decodePkt hostile input (A-09, W-003)", () => {
+  // A bad length can never become a packet, and waiting for "more data"
+  // would leave it blocking the buffer forever, so it is a framing error.
+  it.each([
+    ["a negative length field", -1],
+    ["an absurdly large length field", 1_000_000],
+    ["a length below the RCON minimum", 9],
+  ])("throws on %s", (_name, length) => {
     const buf = Buffer.alloc(20);
-    buf.writeInt32LE(-1, 0);
-    expect(decodePkt(buf)).toBeNull();
+    buf.writeInt32LE(length, 0);
+    expect(() => decodePkt(buf)).toThrow(RconFramingError);
   });
 
-  it("rejects an absurdly large length field", () => {
-    const buf = Buffer.alloc(20);
-    buf.writeInt32LE(1_000_000, 0);
-    expect(decodePkt(buf)).toBeNull();
-  });
-
-  it("rejects a length below the RCON minimum", () => {
-    const buf = Buffer.alloc(20);
-    buf.writeInt32LE(9, 0);
-    expect(decodePkt(buf)).toBeNull();
+  it("accepts a full 4096-byte Minecraft reply", () => {
+    const body = "x".repeat(4096);
+    const pkt = decodePkt(encodePkt(5, 0, body));
+    expect(pkt?.body).toBe(body);
   });
 });

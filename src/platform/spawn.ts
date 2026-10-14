@@ -17,7 +17,12 @@
  * every argument reaches the child exactly as passed.
  */
 import { spawn } from "child_process";
+import { randomBytes } from "crypto";
+import fs from "fs";
+import os from "os";
 import path from "path";
+
+import { REPO_ROOT } from "./paths.js";
 
 /** What the callers below need of the instance, and nothing more. */
 export interface SudoSpawnTarget {
@@ -34,6 +39,8 @@ export interface SudoSpawnOptions {
    * "Mod operation" — capitalised, because it opens the timeout sentence.
    */
   label: string;
+  /** Written to the child's stdin, which is then closed. For input too large for an argument. */
+  input?: string;
 }
 
 export interface SudoSpawnResult {
@@ -134,13 +141,18 @@ export function runAsInstanceUser(
       {
         cwd: target.scriptsDir,
         env: childEnv(target.linuxUser),
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
         // Process-group leader, so the timeout below can SIGTERM the whole
         // tree (the real work runs as a grandchild once sudo re-execs as the
         // instance user) rather than only the sudo parent. BUG-01/A-02.
         detached: true,
       },
     );
+
+    if (opts.input !== undefined && child.stdin) {
+      child.stdin.on("error", () => undefined); // the child may exit before reading it all
+      child.stdin.end(opts.input);
+    }
 
     let stdout = "";
     let stderr = "";
@@ -157,27 +169,40 @@ export function runAsInstanceUser(
       }
     };
 
+    // W-008: a timed-out run is not over when we signal it. The caller holds
+    // the instance slot until this settles, so it settles only once the
+    // process has closed, or once SIGKILL had its grace period too and the
+    // tree is as dead as we can make it.
+    let timedOut: (() => void) | null = null;
     const timer = setTimeout(() => {
       killed = true;
+      let settled = false;
+      timedOut = () => {
+        if (settled) return;
+        settled = true;
+        if (killTimer) clearTimeout(killTimer);
+        reject(
+          new Error(
+            `${label} timed out after ${timeoutMs / 1000}s\n\n` +
+              `Output:\n${stdout.slice(-500)}`,
+          ),
+        );
+      };
       signalGroup("SIGTERM");
-      killTimer = setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS);
-      killTimer.unref();
-      reject(
-        new Error(
-          `${label} timed out after ${timeoutMs / 1000}s\n\n` +
-            `Output:\n${stdout.slice(-500)}`,
-        ),
-      );
+      killTimer = setTimeout(() => {
+        signalGroup("SIGKILL");
+        killTimer = setTimeout(() => timedOut?.(), KILL_GRACE_MS);
+      }, KILL_GRACE_MS);
     }, timeoutMs);
 
-    child.stdout.on("data", (d: Buffer) => {
+    child.stdout!.on("data", (d: Buffer) => {
       if (stdout.length >= MAX_OUTPUT_BYTES) {
         stdoutTruncated = true;
         return;
       }
       stdout += d.toString();
     });
-    child.stderr.on("data", (d: Buffer) => {
+    child.stderr!.on("data", (d: Buffer) => {
       if (stderr.length >= MAX_OUTPUT_BYTES) {
         stderrTruncated = true;
         return;
@@ -186,8 +211,11 @@ export function runAsInstanceUser(
     });
 
     child.on("close", (code) => {
+      if (killed) {
+        timedOut?.();
+        return;
+      }
       if (killTimer) clearTimeout(killTimer);
-      if (killed) return;
       clearTimeout(timer);
 
       if (/\[SUDO ERROR\]/i.test(`${stdout}\n${stderr}`)) {
@@ -237,6 +265,72 @@ export interface JobSpawnHandle {
   done: Promise<{ exitCode: number | null; stderr: string }>;
   /** Ask the whole process group to stop (SIGTERM, then SIGKILL after a grace period). */
   cancel(): void;
+  /** The process group the job leads; recorded so a restarted wrapper can see it still runs. */
+  pid?: number;
+  /** The files the job writes to, removed when it ends (left for a successor if the wrapper exits first). */
+  outputFiles?: string[];
+}
+
+/**
+ * Where job output files and job records live: wrapper-owned, outside any
+ * server directory. `MC_STATE_DIR` wins; otherwise `./state`, unless the
+ * wrapper cannot write there (a read-only install), in which case a private
+ * per-user directory under the system temp dir. That fallback is shared
+ * with every other user, so it is used only when it is a real directory we
+ * own and nobody else can reach.
+ */
+export function jobStateDir(): string {
+  if (process.env.MC_STATE_DIR) return path.join(process.env.MC_STATE_DIR, "jobs");
+  const local = path.join(REPO_ROOT, "state");
+  if (canCreateIn(local)) return path.join(local, "jobs");
+  return path.join(privateTempDir(), "jobs");
+}
+
+/** Can we write `dir`, or create it in its nearest existing parent? */
+function canCreateIn(dir: string): boolean {
+  let probe = dir;
+  for (;;) {
+    try {
+      fs.accessSync(probe, fs.constants.W_OK);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return false;
+    }
+    const parent = path.dirname(probe);
+    if (parent === probe) return false;
+    probe = parent;
+  }
+}
+
+/** `<tmpdir>/mc-api-server-<uid>`, created 0700, refused unless it is ours alone. */
+export function privateTempDir(): string {
+  const uid = process.getuid?.() ?? 0;
+  const dir = path.join(os.tmpdir(), `mc-api-server-${uid}`);
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
+  const st = fs.lstatSync(dir);
+  if (!st.isDirectory() || st.uid !== uid || (st.mode & 0o077) !== 0) {
+    throw new Error(
+      `${dir} is not a private directory owned by this user; set MC_STATE_DIR to a directory the wrapper owns`,
+    );
+  }
+  return dir;
+}
+
+/** How often a running job's output file is read for new lines. */
+const JOB_POLL_MS = 250;
+
+/** Is the process group still there? EPERM means it is, just not ours to signal. */
+export function processGroupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 /**
@@ -245,8 +339,11 @@ export interface JobSpawnHandle {
  * so nothing accumulates in memory and a poller sees each phase as it happens.
  * Same user, environment, process-group handling and sudoers detection.
  *
- * The child is a process-group leader of its own, so it is not tied to this
- * process: a wrapper restart does not kill an upgrade half way through.
+ * W-009: the child is a process-group leader of its own, and its output goes
+ * to files rather than pipes. With pipes, the first write after the wrapper
+ * exited raised SIGPIPE and killed the job half way through an upgrade; a
+ * file outlives the wrapper, so the job does too (given a supervisor that
+ * leaves the group alone, see README).
  */
 export function spawnJobAsInstanceUser(
   target: SudoSpawnTarget,
@@ -254,21 +351,96 @@ export function spawnJobAsInstanceUser(
   opts: JobSpawnOptions,
 ): JobSpawnHandle {
   let cancel: () => void = () => undefined;
+  let pid: number | undefined;
+  const dir = jobStateDir();
+  const base = path.join(dir, `${opts.label.toLowerCase().replace(/\W+/g, "-")}-${Date.now()}-${randomBytes(4).toString("hex")}`);
+  const outPath = `${base}.out`;
+  const errPath = `${base}.err`;
+
   const done = new Promise<{ exitCode: number | null; stderr: string }>((resolve, reject) => {
+    let outFd: number;
+    let errFd: number;
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      outFd = fs.openSync(outPath, "w", 0o600);
+      errFd = fs.openSync(errPath, "w", 0o600);
+    } catch (err) {
+      reject(new Error(`Failed to start ${opts.label.toLowerCase()}: ${(err as Error).message}`));
+      return;
+    }
+    const cleanup = (): void => {
+      for (const f of [outPath, errPath]) {
+        try {
+          fs.rmSync(f, { force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+    };
+
     const child = spawn("sudo", ["-n", "-u", target.linuxUser, ...command], {
       cwd: target.scriptsDir,
       env: childEnv(target.linuxUser),
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", outFd, errFd],
       detached: true,
     });
+    // The child holds its own copies now.
+    fs.closeSync(outFd);
+    fs.closeSync(errFd);
+    pid = child.pid;
     // Closed at once when there is nothing to send, so the job never waits on input.
-    child.stdin.on("error", () => undefined); // the script may exit before it reads everything
-    child.stdin.end(opts.input ?? "");
+    child.stdin?.on("error", () => undefined); // the script may exit before it reads everything
+    child.stdin?.end(opts.input ?? "");
 
     let pending = "";
-    let stderr = "";
+    let readOffset = 0;
     let sudoError = false;
     let killed = false;
+
+    const drain = (): void => {
+      let fd: number;
+      try {
+        fd = fs.openSync(outPath, "r");
+      } catch {
+        return;
+      }
+      try {
+        const size = fs.fstatSync(fd).size;
+        while (readOffset < size) {
+          const chunk = Buffer.alloc(Math.min(64 * 1024, size - readOffset));
+          const n = fs.readSync(fd, chunk, 0, chunk.length, readOffset);
+          if (n <= 0) break;
+          readOffset += n;
+          pending += chunk.subarray(0, n).toString();
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+      let nl: number;
+      while ((nl = pending.indexOf("\n")) !== -1) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (/\[SUDO ERROR\]/i.test(line)) sudoError = true;
+        if (line) opts.onLine(line);
+      }
+    };
+    const poll = setInterval(drain, JOB_POLL_MS);
+
+    const readStderr = (): string => {
+      try {
+        const fd = fs.openSync(errPath, "r");
+        try {
+          const size = Math.min(fs.fstatSync(fd).size, MAX_OUTPUT_BYTES);
+          const buf = Buffer.alloc(size);
+          fs.readSync(fd, buf, 0, size, 0);
+          return buf.toString();
+        } finally {
+          fs.closeSync(fd);
+        }
+      } catch {
+        return "";
+      }
+    };
 
     const signalGroup = (signal: NodeJS.Signals): void => {
       try {
@@ -284,32 +456,40 @@ export function spawnJobAsInstanceUser(
       kill.unref();
     };
 
+    // W-008: as in runAsInstanceUser, a timed-out job settles only once it
+    // has closed or SIGKILL's grace period has run out, so whoever holds the
+    // slot for it keeps it until then.
+    let timedOut: (() => void) | null = null;
     const timer = setTimeout(() => {
       killed = true;
+      let settled = false;
+      let finalTimer: ReturnType<typeof setTimeout> | null = null;
+      timedOut = () => {
+        if (settled) return;
+        settled = true;
+        if (finalTimer) clearTimeout(finalTimer);
+        clearInterval(poll);
+        cleanup();
+        reject(new Error(`${opts.label} timed out after ${opts.timeoutMs / 1000}s`));
+      };
       signalGroup("SIGTERM");
-      const kill = setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS);
-      kill.unref();
-      reject(new Error(`${opts.label} timed out after ${opts.timeoutMs / 1000}s`));
+      finalTimer = setTimeout(() => {
+        signalGroup("SIGKILL");
+        finalTimer = setTimeout(() => timedOut?.(), KILL_GRACE_MS);
+      }, KILL_GRACE_MS);
     }, opts.timeoutMs);
-
-    child.stdout.on("data", (d: Buffer) => {
-      pending += d.toString();
-      let nl: number;
-      while ((nl = pending.indexOf("\n")) !== -1) {
-        const line = pending.slice(0, nl).trim();
-        pending = pending.slice(nl + 1);
-        if (/\[SUDO ERROR\]/i.test(line)) sudoError = true;
-        if (line) opts.onLine(line);
-      }
-    });
-    child.stderr.on("data", (d: Buffer) => {
-      if (stderr.length < MAX_OUTPUT_BYTES) stderr += d.toString();
-    });
 
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (killed) return;
+      if (killed) {
+        timedOut?.();
+        return;
+      }
+      clearInterval(poll);
+      drain();
       if (pending.trim()) opts.onLine(pending.trim());
+      const stderr = readStderr();
+      cleanup();
       if (sudoError || /\[SUDO ERROR\]/i.test(stderr)) {
         reject(
           new Error(
@@ -323,8 +503,15 @@ export function spawnJobAsInstanceUser(
 
     child.on("error", (err) => {
       clearTimeout(timer);
+      clearInterval(poll);
+      cleanup();
       reject(new Error(`Failed to start ${opts.label.toLowerCase()}: ${err.message}`));
     });
   });
-  return { done, cancel: () => cancel() };
+  return {
+    done,
+    cancel: () => cancel(),
+    ...(pid !== undefined ? { pid } : {}),
+    outputFiles: [outPath, errPath],
+  };
 }

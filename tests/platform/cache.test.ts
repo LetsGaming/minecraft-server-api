@@ -94,3 +94,25 @@ describe("cached()", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("invalidate during a load (W-017)", () => {
+  it("does not cache or serve a load that started before the invalidate", async () => {
+    let n = 0;
+    const releases: Array<() => void> = [];
+    const c = cached(
+      () => new Promise<number>((resolve) => {
+        const v = ++n;
+        releases.push(() => resolve(v));
+      }),
+      { freshMs: 60_000, staleMs: 60_000 },
+    );
+    const before = c.get();
+    c.invalidate();
+    const after = c.get();
+    releases[0]!();
+    releases[1]!();
+    expect((await before).value).toBe(1);
+    expect((await after).value).toBe(2);
+    expect((await c.get()).value).toBe(2);
+  });
+});

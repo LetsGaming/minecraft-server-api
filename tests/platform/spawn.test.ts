@@ -87,8 +87,22 @@ describe("runAsInstanceUser timeout", () => {
     const assertion = expect(p).rejects.toThrow(/Script timed out after 1s[\s\S]*partial/);
     child.emitOut("partial");
     await vi.advanceTimersByTimeAsync(1_000);
-    await assertion;
     expect(kill).toHaveBeenCalledWith(-4242, "SIGTERM");
+    // W-008: settles once the process has actually closed.
+    child.close(143);
+    await assertion;
+  });
+
+  it("holds until the process closes, not when it is signalled (W-008)", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(process, "kill").mockImplementation(() => true);
+    let settled = false;
+    const p = runAsInstanceUser(target, ["bash", "x"], opts);
+    p.catch(() => undefined).finally(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(settled).toBe(false);
+    child.close(143);
+    await expect(p).rejects.toThrow(/timed out/);
   });
 
   it("falls back to killing the child when the group kill throws", async () => {
@@ -100,8 +114,9 @@ describe("runAsInstanceUser timeout", () => {
     const p = runAsInstanceUser(target, ["bash", "x"], opts);
     const assertion = expect(p).rejects.toThrow(/timed out/);
     await vi.advanceTimersByTimeAsync(1_000);
-    await assertion;
     expect(killChild).toHaveBeenCalledWith("SIGTERM");
+    child.close(143);
+    await assertion;
   });
 });
 
@@ -132,10 +147,12 @@ describe("runAsInstanceUser SIGKILL escalation", () => {
     const p = runAsInstanceUser(target, ["bash", "x"], opts);
     const assertion = expect(p).rejects.toThrow(/timed out/);
     await vi.advanceTimersByTimeAsync(1_000);
-    await assertion;
     expect(kill).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(kill).toHaveBeenLastCalledWith(-4242, "SIGKILL");
+    // A tree that survives even SIGKILL is given up on after one more grace.
+    await vi.advanceTimersByTimeAsync(10_000);
+    await assertion;
   });
 
   it("does not SIGKILL a group that exited after SIGTERM", async () => {
@@ -144,8 +161,8 @@ describe("runAsInstanceUser SIGKILL escalation", () => {
     const p = runAsInstanceUser(target, ["bash", "x"], opts);
     const assertion = expect(p).rejects.toThrow(/timed out/);
     await vi.advanceTimersByTimeAsync(1_000);
-    await assertion;
     child.close(143);
+    await assertion;
     await vi.advanceTimersByTimeAsync(20_000);
     expect(kill).toHaveBeenCalledTimes(1);
   });

@@ -95,17 +95,19 @@ export function registerControlRoutes(
       // client's own input is safe) instead of letting runScript throw
       // into the generic-500 path and losing the feedback the bot
       // surfaces to admins.
-      if (!(action in SCRIPT_MAP)) {
+      // Own keys only: `in` also sees "constructor", "__proto__" and friends.
+      if (!Object.hasOwn(SCRIPT_MAP, action)) {
         return reply
           .status(400)
           .send({ error: `Unknown script action: ${action.slice(0, 64)}` });
       }
       // F-001: validate args before passing to spawn()
-      if (!validateArgs(args)) {
+      if (!validateArgs(args, action)) {
         return reply.status(400).send({
           error:
             "Invalid args: must be an array of up to 5 strings containing only " +
-            "alphanumeric, '.', '@', or '-' characters (max 128 chars each)",
+            "alphanumeric, '.', '@', or '-' characters (max 128 chars each), " +
+            "and no flags other than the ones this action accepts",
         });
       }
       try {

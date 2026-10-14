@@ -15,8 +15,15 @@ import { registerInstanceRoutes } from "./routes/instance/index.js";
 import { WriteRateLimiter } from "./writeRateLimit.js";
 import { createOperations } from "../instances/operations.js";
 import { initLogStream, type LogStreamAPI } from "../platform/logStream.js";
-import { log } from "../platform/logger.js";
-import { beginRequest, endRequest, getInFlight, recordRateLimitRejection, recordRequest } from "../platform/metrics.js";
+import { log, logThrottled } from "../platform/logger.js";
+import {
+  beginRequest,
+  endRequest,
+  getInFlight,
+  recordRateLimitRejection,
+  recordRequest,
+  UNMATCHED_ROUTE,
+} from "../platform/metrics.js";
 import type { RouteSpec } from "../contracts/openapi.js";
 import type { AppConfig } from "../config/types.js";
 import type { InstanceEntry } from "./routes/instance/shared.js";
@@ -112,13 +119,20 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
   // Every request is timed and counted; nothing here is gated behind
   // MC_DEBUG because it is O(1) per request and is exactly what is needed
   // to answer "what was happening right before this went unreachable".
-  app.addHook("onRequest", async () => {
-    beginRequest();
+  app.addHook("onRequest", async (req, reply) => {
+    beginRequest(req.raw);
+    // W-002: Fastify skips onResponse when the client hung up before the
+    // reply was sent, which leaked one slot per aborted request until every
+    // route answered 503. The socket closing releases it too; endRequest
+    // counts each request once whichever path gets there first.
+    reply.raw.once("close", () => endRequest(req.raw));
   });
   app.addHook("onResponse", async (req, reply) => {
-    endRequest();
+    endRequest(req.raw);
     const durationMs = reply.elapsedTime;
-    const routePath = req.routeOptions.url ?? req.url;
+    // W-010: never the raw URL. An unauthenticated client could otherwise
+    // add one metrics key per distinct path or query string, forever.
+    const routePath = req.routeOptions.url ?? UNMATCHED_ROUTE;
     recordRequest(req.method, routePath, reply.statusCode, durationMs);
     if (durationMs > SLOW_REQUEST_WARN_MS) {
       log.warn(
@@ -148,7 +162,13 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
     allowList: (req) => req.url === "/health" || req.url === "/metrics",
     errorResponseBuilder: (_req, ctx) => {
       recordRateLimitRejection();
-      log.warn("http", `429: read budget exceeded (${ctx.max}/${ctx.after})`);
+      // W-020: a flood would otherwise log one line per rejected request.
+      logThrottled("429-read", 10_000, (held) =>
+        log.warn(
+          "http",
+          `429: read budget exceeded (${ctx.max}/${ctx.after})${held ? ` (+${held} more not logged)` : ""}`,
+        ),
+      );
       return { error: "Too many requests" };
     },
   });
@@ -167,7 +187,12 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
     if (!writeLimiter.tryAcquire(req.ip)) {
       recordRateLimitRejection();
       const retryAfter = writeLimiter.retryAfterSeconds(req.ip);
-      log.warn("http", `429: write budget exceeded for ${req.ip} (retry in ${retryAfter}s)`);
+      logThrottled("429-write", 10_000, (held) =>
+        log.warn(
+          "http",
+          `429: write budget exceeded for ${req.ip} (retry in ${retryAfter}s)${held ? ` (+${held} more not logged)` : ""}`,
+        ),
+      );
       void reply.header("Retry-After", String(retryAfter));
       return reply.status(429).send({ error: "Too many write requests" });
     }

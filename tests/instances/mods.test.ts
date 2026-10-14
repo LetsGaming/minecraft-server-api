@@ -59,6 +59,10 @@ describe("MOD_VALIDATION", () => {
   it("validates the version, loader and version id shapes", () => {
     expect(MC_VERSION_RE.test("1.21.4")).toBe(true);
     expect(MC_VERSION_RE.test("1.21 4")).toBe(false);
+    // W-013: not a flag to upgrade.sh.
+    expect(MC_VERSION_RE.test("--prune-only")).toBe(false);
+    expect(MC_VERSION_RE.test("-1.21")).toBe(false);
+    expect(MC_VERSION_RE.test("24w14a")).toBe(true);
     expect(LOADER_RE.test("neoforge")).toBe(true);
     expect(LOADER_RE.test("Fabric")).toBe(false);
     expect(VERSION_ID_RE.test("AbCd-123")).toBe(true);

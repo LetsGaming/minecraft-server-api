@@ -172,7 +172,7 @@ export async function probeProcess(
   }
   // No sudo needed: ps reads other users' processes. Also covers the window
   // during startup where the JVM is up but has not bound RCON yet.
-  if (await getServerProcessUsage(cfg.linuxUser)) return "process";
+  if (await getServerProcessUsage(cfg.linuxUser, { sampleCpu: false })) return "process";
   if (await screenSessionExists(cfg)) return "screen";
   return "none";
 }
@@ -221,9 +221,14 @@ export function createHealthMonitor(
     if (rcon) {
       // A round-trip inside RCON_TRUST_MS already proves both liveness and
       // responsiveness — another `list` would only add load to a server we
-      // just heard from.
-      if (startedAt - rcon.lastSuccessTime < RCON_TRUST_MS) {
+      // just heard from. W-004: only when we also hold a roster that recent.
+      // The trusted round-trip may have been some other command, and a probe
+      // that skipped `list` without one reported nobody online.
+      const recentList =
+        lastList && startedAt - lastList.at < RCON_TRUST_MS ? lastList : null;
+      if (startedAt - rcon.lastSuccessTime < RCON_TRUST_MS && recentList) {
         rconResponsive = true;
+        list = recentList.value;
       } else {
         try {
           list = parsePlayerList(await rcon.send("list", RCON_PROBE_TIMEOUT_MS));
@@ -257,7 +262,8 @@ export function createHealthMonitor(
         ? "online"
         : "unresponsive";
 
-    if (list) lastList = { value: list, at: Date.now() };
+    // A reused roster keeps its original age, so it can't be reused forever.
+    if (list && list !== lastList?.value) lastList = { value: list, at: Date.now() };
 
     return {
       health: {

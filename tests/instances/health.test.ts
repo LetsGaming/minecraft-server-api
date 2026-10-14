@@ -171,14 +171,26 @@ describe("health state resolution", () => {
   });
 
   it("trusts a very recent round-trip instead of sending another command", async () => {
-    const send = vi.fn();
-    const health = await createHealthMonitor(
-      cfg(),
-      fakeRcon(send, Date.now()),
-    ).get();
+    const send = vi.fn().mockResolvedValue(LIST_OK);
+    const rcon = fakeRcon(send);
+    const monitor = createHealthMonitor(cfg(), rcon);
+    await monitor.getFresh();
+    expect(send).toHaveBeenCalledTimes(1);
 
+    // Heard from it just now, and the roster is as recent: no second `list`.
+    (rcon as { lastSuccessTime: number }).lastSuccessTime = Date.now();
+    const health = await monitor.getFresh();
     expect(health.state).toBe("online");
-    expect(send).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("still asks for the roster when the recent round-trip brought none (W-004)", async () => {
+    // Some other command made RCON look fresh. Skipping `list` here used to
+    // report nobody online while players were on.
+    const send = vi.fn().mockResolvedValue(LIST_OK);
+    const monitor = createHealthMonitor(cfg(), fakeRcon(send, Date.now()));
+    expect((await monitor.getList()).players).toEqual(["Alice", "Bob"]);
+    expect(send).toHaveBeenCalledWith("list", expect.any(Number));
   });
 });
 

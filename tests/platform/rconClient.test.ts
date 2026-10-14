@@ -4,7 +4,7 @@ import net from "net";
 import { RconClient } from "../../src/platform/rcon/client.js";
 import { decodePkt, encodePkt } from "../../src/platform/rcon/packet.js";
 
-type Mode = "drop" | "ok" | "silent";
+type Mode = "drop" | "ok" | "silent" | "long" | "garbage" | "mute" | "hangup";
 
 let mode: Mode;
 let server: net.Server;
@@ -35,7 +35,21 @@ beforeEach(async () => {
       const pkt = decodePkt(buf);
       if (!pkt) return;
       if (pkt.type === 3) sock.write(encodePkt(1, 2, ""));
-      else if (pkt.type === 2) sock.write(encodePkt(pkt.id, 0, `echo:${pkt.body}`));
+      else if (pkt.type === 2) {
+        if (mode === "mute") return;
+        if (mode === "hangup") {
+          sock.destroy();
+          return;
+        }
+        if (mode === "garbage") {
+          const bad = Buffer.alloc(20);
+          bad.writeInt32LE(-5, 0);
+          sock.write(bad);
+          return;
+        }
+        const body = mode === "long" ? "y".repeat(4096) : `echo:${pkt.body}`;
+        sock.write(encodePkt(pkt.id, 0, body));
+      }
     });
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -79,5 +93,52 @@ describe("RconClient auth timeout", () => {
     await settle();
     await vi.advanceTimersByTimeAsync(10_000);
     await assertion;
+  });
+});
+
+describe("RconClient framing (W-003)", () => {
+  it("takes a full-size reply and keeps answering afterwards", async () => {
+    mode = "long";
+    const client = new RconClient("127.0.0.1", port, "pw");
+    expect(await client.send("big")).toHaveLength(4096);
+    mode = "ok";
+    expect(await client.send("list")).toBe("echo:list");
+  });
+
+  it("drops a connection that is out of step and starts clean", async () => {
+    mode = "garbage";
+    const client = new RconClient("127.0.0.1", port, "pw");
+    await expect(client.send("list")).rejects.toMatchObject({
+      name: "RconNoReplyError",
+    });
+    mode = "ok";
+    expect(await client.send("list")).toBe("echo:list");
+    expect(connections).toBe(2);
+  });
+
+  it("reports a missing reply as RconNoReplyError, not a delivery failure", async () => {
+    mode = "mute";
+    const client = new RconClient("127.0.0.1", port, "pw");
+    const attempt = client.send("list");
+    const assertion = expect(attempt).rejects.toMatchObject({
+      name: "RconNoReplyError",
+      message: "RCON timeout",
+    });
+    await settle();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await assertion;
+  });
+});
+
+describe("RconClient connection loss (W-005)", () => {
+  it("reports a command whose connection dropped after the write as RconNoReplyError", async () => {
+    mode = "ok";
+    const client = new RconClient("127.0.0.1", port, "pw");
+    await client.connect();
+    mode = "hangup";
+    await expect(client.send("give Steve diamond")).rejects.toMatchObject({
+      name: "RconNoReplyError",
+      message: "RCON lost",
+    });
   });
 });

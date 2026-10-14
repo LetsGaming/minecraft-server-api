@@ -50,5 +50,14 @@ describe("script args validation (F-001)", () => {
   it("rejects more than 5 args", () =>
     expect(validateArgs(["a", "b", "c", "d", "e", "f"])).toBe(false));
   it("rejects non-string entries", () => expect(validateArgs([42])).toBe(false));
+  it("rejects a flag the action does not take (W-014)", () => {
+    expect(validateArgs(["--file", "x"], "rollback")).toBe(false);
+    expect(validateArgs(["--y"], "backup")).toBe(false);
+    expect(validateArgs(["-x"])).toBe(false);
+  });
+  it("accepts the flags an action takes", () =>
+    expect(validateArgs(["--archive"], "backup")).toBe(true));
+  it("does not read flags off the prototype", () =>
+    expect(validateArgs(["--archive"], "constructor")).toBe(false));
   it("rejects shell metacharacters", () => expect(validateArgs(["a;rm"])).toBe(false));
 });

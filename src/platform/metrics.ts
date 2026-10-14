@@ -25,6 +25,12 @@ interface RouteMetric {
 
 const routes = new Map<string, RouteMetric>();
 
+/** The route label for a request no route matched (a 404, a probe). */
+export const UNMATCHED_ROUTE = "<unmatched>";
+
+/** Far above the routes this process serves; the rest share UNMATCHED_ROUTE. */
+const MAX_ROUTE_KEYS = 512;
+
 let inFlight = 0;
 let peakInFlight = 0;
 let rateLimitRejections = 0;
@@ -43,12 +49,29 @@ function percentile(sorted: number[], p: number): number {
   return sorted[idx]!;
 }
 
-export function beginRequest(): void {
+/** Requests holding an in-flight slot, keyed by their raw request object. */
+const holding = new WeakSet<object>();
+
+/**
+ * Take an in-flight slot. With a `handle` (the raw request), the slot is
+ * released at most once however many paths call endRequest for it.
+ */
+export function beginRequest(handle?: object): void {
+  if (handle) {
+    if (holding.has(handle)) return;
+    holding.add(handle);
+  }
   inFlight++;
   if (inFlight > peakInFlight) peakInFlight = inFlight;
 }
 
-export function endRequest(): void {
+/**
+ * Give the slot back. W-002: a request can end three ways (a sent reply, a
+ * client that hung up first, a hijacked stream) and each one calls this, so
+ * it must be idempotent per request or the count drifts.
+ */
+export function endRequest(handle?: object): void {
+  if (handle && !holding.delete(handle)) return;
   inFlight = Math.max(0, inFlight - 1);
 }
 
@@ -64,8 +87,14 @@ export function recordRequest(
   durationMs: number,
   timedOut = false,
 ): void {
-  const key = routeKey(method, routePath);
+  let key = routeKey(method, routePath);
   let m = routes.get(key);
+  // W-010: one key per route the router knows plus a shared overflow, so no
+  // stream of distinct requests can grow this map.
+  if (!m && routes.size >= MAX_ROUTE_KEYS) {
+    key = routeKey(method, UNMATCHED_ROUTE);
+    m = routes.get(key);
+  }
   if (!m) {
     m = { count: 0, errorCount: 0, timeoutCount: 0, samples: [], next: 0 };
     routes.set(key, m);
