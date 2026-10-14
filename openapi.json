@@ -310,6 +310,16 @@
               }
             }
           },
+          "423": {
+            "description": "Locked: another operation holds the instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationBusy"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limited",
             "content": {
@@ -365,6 +375,15 @@
             "in": "header",
             "required": false,
             "description": "`bytes=start-[end]` or `bytes=-suffix`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "if-range",
+            "in": "header",
+            "required": false,
+            "description": "The ETag of the partial download being resumed. A Range is honoured only while it still names the same file; otherwise the whole file is sent.",
             "schema": {
               "type": "string"
             }
@@ -521,6 +540,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RestoreRefused"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Locked: another operation holds the instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationBusy"
                 }
               }
             }
@@ -998,6 +1027,16 @@
               }
             }
           },
+          "403": {
+            "description": "Status 403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -1086,6 +1125,15 @@
               "type": "string"
             },
             "description": "Opaque id from the config index."
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": true,
+            "description": "The etag of the version being replaced.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -1129,8 +1177,38 @@
               }
             }
           },
+          "403": {
+            "description": "Status 403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition required",
             "content": {
               "application/json": {
                 "schema": {
@@ -5298,6 +5376,10 @@
           "snapshot": {
             "type": "string",
             "description": "A name from the file's `snapshots`."
+          },
+          "allowProtected": {
+            "type": "boolean",
+            "description": "Allow changes to protected server.properties keys (RCON, online-mode, whitelist, permission levels, level-name, ports). Without it such a change is refused with 403."
           }
         },
         "required": [
@@ -5309,7 +5391,12 @@
         "type": "object",
         "properties": {
           "text": {
-            "type": "string"
+            "type": "string",
+            "description": "The new contents. Secret values come back redacted from a read; a redacted line sent back unchanged keeps its real value."
+          },
+          "allowProtected": {
+            "type": "boolean",
+            "description": "Allow changes to protected server.properties keys (RCON, online-mode, whitelist, permission levels, level-name, ports). Without it such a change is refused with 403."
           }
         },
         "required": [
