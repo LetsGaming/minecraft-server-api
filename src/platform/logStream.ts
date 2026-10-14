@@ -32,7 +32,8 @@ function maxSseClients(): number {
 }
 
 async function readWindow(file: string, start: number, length: number): Promise<Buffer> {
-  const handle = await fsp.open(file, "r");
+  // The server's user owns the log; a link planted in its place is not followed (W-007).
+  const handle = await fsp.open(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
     const buf = Buffer.allocUnsafe(length);
     const { bytesRead } = await handle.read(buf, 0, length, start);
@@ -67,6 +68,8 @@ export function initLogStream(
     // `pending` is what keeps the tail live under load — see below.
     const state = {
       lastSize: 0,
+      /** Identity of the file lastSize belongs to; a new one means it was rotated. */
+      ino: 0,
       reading: false,
       pending: false,
       pendingRename: false,
@@ -77,7 +80,9 @@ export function initLogStream(
 
     // Seed the read offset so we don't replay the entire log on first connect
     try {
-      state.lastSize = fs.statSync(logFilePath).size;
+      const seed = fs.statSync(logFilePath);
+      state.lastSize = seed.size;
+      state.ino = seed.ino;
     } catch {
       /* log doesn't exist yet — start at 0 */
     }
@@ -115,6 +120,13 @@ export function initLogStream(
           return;
         }
 
+        // W-019: rotation by size alone missed a new file that had already
+        // grown past the old offset by the next poll; its first lines were
+        // lost and the rest read from mid-line. The inode tells them apart.
+        if (stat.ino !== state.ino) {
+          state.ino = stat.ino;
+          state.lastSize = 0;
+        }
         if (stat.size < state.lastSize) state.lastSize = 0;
         if (stat.size === state.lastSize) return;
 

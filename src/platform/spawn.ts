@@ -38,6 +38,8 @@ export interface SudoSpawnOptions {
    * "Mod operation" — capitalised, because it opens the timeout sentence.
    */
   label: string;
+  /** Written to the child's stdin, which is then closed. For input too large for an argument. */
+  input?: string;
 }
 
 export interface SudoSpawnResult {
@@ -138,13 +140,18 @@ export function runAsInstanceUser(
       {
         cwd: target.scriptsDir,
         env: childEnv(target.linuxUser),
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
         // Process-group leader, so the timeout below can SIGTERM the whole
         // tree (the real work runs as a grandchild once sudo re-execs as the
         // instance user) rather than only the sudo parent. BUG-01/A-02.
         detached: true,
       },
     );
+
+    if (opts.input !== undefined && child.stdin) {
+      child.stdin.on("error", () => undefined); // the child may exit before reading it all
+      child.stdin.end(opts.input);
+    }
 
     let stdout = "";
     let stderr = "";
@@ -187,14 +194,14 @@ export function runAsInstanceUser(
       }, KILL_GRACE_MS);
     }, timeoutMs);
 
-    child.stdout.on("data", (d: Buffer) => {
+    child.stdout!.on("data", (d: Buffer) => {
       if (stdout.length >= MAX_OUTPUT_BYTES) {
         stdoutTruncated = true;
         return;
       }
       stdout += d.toString();
     });
-    child.stderr.on("data", (d: Buffer) => {
+    child.stderr!.on("data", (d: Buffer) => {
       if (stderr.length >= MAX_OUTPUT_BYTES) {
         stderrTruncated = true;
         return;

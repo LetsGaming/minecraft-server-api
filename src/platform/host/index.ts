@@ -98,6 +98,8 @@ export async function getHostUsage(): Promise<HostUsage | null> {
  */
 export async function getServerProcessUsage(
   linuxUser: string,
+  /** False for a liveness check, which does not need the 250 ms CPU sample. */
+  { sampleCpu = true }: { sampleCpu?: boolean } = {},
 ): Promise<ProcessUsage | null> {
   const { stdout, ok } = await execSafe("ps", [
     "-u",
@@ -128,7 +130,7 @@ export async function getServerProcessUsage(
 
   // A process that exits mid-sample yields null; 0% is the honest reading
   // for "it is no longer using any CPU".
-  const cpuPercent = (await sampleProcessCpu(pid)) ?? 0;
+  const cpuPercent = sampleCpu ? ((await sampleProcessCpu(pid)) ?? 0) : 0;
   return { pid, rssBytes, cpuPercent };
 }
 

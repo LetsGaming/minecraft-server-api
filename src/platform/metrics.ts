@@ -25,6 +25,12 @@ interface RouteMetric {
 
 const routes = new Map<string, RouteMetric>();
 
+/** The route label for a request no route matched (a 404, a probe). */
+export const UNMATCHED_ROUTE = "<unmatched>";
+
+/** Far above the routes this process serves; the rest share UNMATCHED_ROUTE. */
+const MAX_ROUTE_KEYS = 512;
+
 let inFlight = 0;
 let peakInFlight = 0;
 let rateLimitRejections = 0;
@@ -81,8 +87,14 @@ export function recordRequest(
   durationMs: number,
   timedOut = false,
 ): void {
-  const key = routeKey(method, routePath);
+  let key = routeKey(method, routePath);
   let m = routes.get(key);
+  // W-010: one key per route the router knows plus a shared overflow, so no
+  // stream of distinct requests can grow this map.
+  if (!m && routes.size >= MAX_ROUTE_KEYS) {
+    key = routeKey(method, UNMATCHED_ROUTE);
+    m = routes.get(key);
+  }
   if (!m) {
     m = { count: 0, errorCount: 0, timeoutCount: 0, samples: [], next: 0 };
     routes.set(key, m);

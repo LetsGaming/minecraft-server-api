@@ -15,8 +15,15 @@ import { registerInstanceRoutes } from "./routes/instance/index.js";
 import { WriteRateLimiter } from "./writeRateLimit.js";
 import { createOperations } from "../instances/operations.js";
 import { initLogStream, type LogStreamAPI } from "../platform/logStream.js";
-import { log } from "../platform/logger.js";
-import { beginRequest, endRequest, getInFlight, recordRateLimitRejection, recordRequest } from "../platform/metrics.js";
+import { log, logThrottled } from "../platform/logger.js";
+import {
+  beginRequest,
+  endRequest,
+  getInFlight,
+  recordRateLimitRejection,
+  recordRequest,
+  UNMATCHED_ROUTE,
+} from "../platform/metrics.js";
 import type { RouteSpec } from "../contracts/openapi.js";
 import type { AppConfig } from "../config/types.js";
 import type { InstanceEntry } from "./routes/instance/shared.js";
@@ -123,7 +130,9 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
   app.addHook("onResponse", async (req, reply) => {
     endRequest(req.raw);
     const durationMs = reply.elapsedTime;
-    const routePath = req.routeOptions.url ?? req.url;
+    // W-010: never the raw URL. An unauthenticated client could otherwise
+    // add one metrics key per distinct path or query string, forever.
+    const routePath = req.routeOptions.url ?? UNMATCHED_ROUTE;
     recordRequest(req.method, routePath, reply.statusCode, durationMs);
     if (durationMs > SLOW_REQUEST_WARN_MS) {
       log.warn(
@@ -153,7 +162,13 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
     allowList: (req) => req.url === "/health" || req.url === "/metrics",
     errorResponseBuilder: (_req, ctx) => {
       recordRateLimitRejection();
-      log.warn("http", `429: read budget exceeded (${ctx.max}/${ctx.after})`);
+      // W-020: a flood would otherwise log one line per rejected request.
+      logThrottled("429-read", 10_000, (held) =>
+        log.warn(
+          "http",
+          `429: read budget exceeded (${ctx.max}/${ctx.after})${held ? ` (+${held} more not logged)` : ""}`,
+        ),
+      );
       return { error: "Too many requests" };
     },
   });
@@ -172,7 +187,12 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
     if (!writeLimiter.tryAcquire(req.ip)) {
       recordRateLimitRejection();
       const retryAfter = writeLimiter.retryAfterSeconds(req.ip);
-      log.warn("http", `429: write budget exceeded for ${req.ip} (retry in ${retryAfter}s)`);
+      logThrottled("429-write", 10_000, (held) =>
+        log.warn(
+          "http",
+          `429: write budget exceeded for ${req.ip} (retry in ${retryAfter}s)${held ? ` (+${held} more not logged)` : ""}`,
+        ),
+      );
       void reply.header("Retry-After", String(retryAfter));
       return reply.status(429).send({ error: "Too many write requests" });
     }

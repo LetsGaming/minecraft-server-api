@@ -79,6 +79,17 @@ describe("GET /metrics", () => {
   });
 });
 
+describe("metrics keys (W-010)", () => {
+  it("files unmatched URLs under one key, whatever their path or query", async () => {
+    for (let i = 0; i < 5; i++) {
+      await app.inject({ url: `/no-such-route-${i}?q=${i}` });
+    }
+    const keys = Object.keys(getSnapshot().routes);
+    expect(keys.some((k) => k.includes("no-such-route"))).toBe(false);
+    expect(keys).toContain("GET <unmatched>");
+  });
+});
+
 describe("write rate limit (separate from the read budget)", () => {
   it("429s past the write budget with Retry-After, while GETs keep working", async () => {
     let lastWriteStatus = 0;

@@ -77,7 +77,6 @@ export function logFields(fields: Record<string, unknown>): string {
 
 const LOG_FILE_MAX_BYTES = 5 * 1024 * 1024;
 const LOG_FILES_KEPT = 3;
-const ROTATE_CHECK_EVERY = 200;
 
 /**
  * Where lines are also written: MC_LOG_DIR, else ./logs of the working directory (the unit's
@@ -90,32 +89,97 @@ function logDir(): string | null {
 }
 
 let fileFailed = false;
-let sinceCheck = ROTATE_CHECK_EVERY;
 
-function rotate(file: string): void {
-  if (fs.statSync(file).size < LOG_FILE_MAX_BYTES) return;
-  for (let i = LOG_FILES_KEPT - 1; i >= 1; i--) {
-    if (fs.existsSync(`${file}.${i}`)) fs.renameSync(`${file}.${i}`, `${file}.${i + 1}`);
+/**
+ * W-020: lines waiting for the file, written by one async append per batch.
+ * Every line used to cost an existsSync, a statSync and an appendFileSync on
+ * the event loop, so a flood of 429s blocked the requests it was logging.
+ */
+let queue: string[] = [];
+let flushing: Promise<void> | null = null;
+/** Size of the current file as far as this process knows; null until first read. */
+let knownSize: number | null = null;
+
+async function rotateIfLarge(file: string): Promise<void> {
+  if (knownSize === null) {
+    try {
+      knownSize = (await fs.promises.stat(file)).size;
+    } catch {
+      knownSize = 0;
+    }
   }
-  fs.renameSync(file, `${file}.1`);
+  if (knownSize < LOG_FILE_MAX_BYTES) return;
+  for (let i = LOG_FILES_KEPT - 1; i >= 1; i--) {
+    await fs.promises.rename(`${file}.${i}`, `${file}.${i + 1}`).catch(() => undefined);
+  }
+  await fs.promises.rename(file, `${file}.1`).catch(() => undefined);
+  knownSize = 0;
+}
+
+async function drain(dir: string): Promise<void> {
+  while (queue.length > 0 && !fileFailed) {
+    const batch = queue.join("");
+    queue = [];
+    try {
+      await fs.promises.mkdir(dir, { recursive: true });
+      const file = path.join(dir, "api-server.log");
+      await rotateIfLarge(file);
+      await fs.promises.appendFile(file, batch);
+      knownSize = (knownSize ?? 0) + Buffer.byteLength(batch);
+    } catch (err) {
+      fileFailed = true;
+      queue = [];
+      // eslint-disable-next-line no-console
+      console.error(`[${ts()}] [WARN] [log] cannot write ${dir}, logging to the journal only: ${(err as Error).message}`);
+    }
+  }
 }
 
 function writeFile(line: string): void {
   const dir = logDir();
   if (!dir || fileFailed) return;
+  queue.push(`${line}\n`);
+  flushing ??= new Promise<void>((resolve) => setImmediate(resolve))
+    .then(() => drain(dir))
+    .finally(() => {
+      flushing = null;
+    });
+}
+
+/** Resolves once every line logged so far has reached the file. */
+export async function flushLog(): Promise<void> {
+  while (flushing) await flushing;
+}
+
+// Whatever is still queued when the process exits goes out synchronously.
+process.on("exit", () => {
+  const dir = logDir();
+  if (!dir || fileFailed || queue.length === 0) return;
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, "api-server.log");
-    if (++sinceCheck >= ROTATE_CHECK_EVERY) {
-      sinceCheck = 0;
-      if (fs.existsSync(file)) rotate(file);
-    }
-    fs.appendFileSync(file, `${line}\n`);
-  } catch (err) {
-    fileFailed = true;
-    // eslint-disable-next-line no-console
-    console.error(`[${ts()}] [WARN] [log] cannot write ${dir}, logging to the journal only: ${(err as Error).message}`);
+    fs.appendFileSync(path.join(dir, "api-server.log"), queue.join(""));
+  } catch {
+    /* nothing left to report it to */
   }
+});
+
+/**
+ * Log at most once per `intervalMs` under `key`, counting what was held back.
+ * For lines a client can trigger at request rate (429s).
+ */
+const throttled = new Map<string, { at: number; suppressed: number }>();
+export function logThrottled(
+  key: string,
+  intervalMs: number,
+  write: (suppressedSinceLast: number) => void,
+): void {
+  const now = Date.now();
+  const entry = throttled.get(key);
+  if (entry && now - entry.at < intervalMs) {
+    entry.suppressed++;
+    return;
+  }
+  throttled.set(key, { at: now, suppressed: 0 });
+  write(entry?.suppressed ?? 0);
 }
 
 function emit(level: Level, scope: string, msg: string): void {

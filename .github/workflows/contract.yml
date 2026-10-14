@@ -34,8 +34,14 @@ on:
         required: false
         default: main
 
+permissions:
+  contents: read
+
 env:
   BOT_REPO: LetsGaming/minecraft-bot
+  # Read through the environment in shell steps, never interpolated into
+  # the script text, so a crafted ref cannot become shell syntax.
+  BOT_REF: ${{ inputs.bot_ref || 'main' }}
 
 jobs:
   contract:
@@ -43,18 +49,20 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out the wrapper
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: api-wrapper
+          persist-credentials: false
 
       - name: Check out the bot
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ env.BOT_REPO }}
-          ref: ${{ inputs.bot_ref || 'main' }}
+          ref: ${{ env.BOT_REF }}
           path: bot
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           # The check imports the bot's built core, whose engines require
           # >= 22.13 for node:sqlite.
@@ -78,7 +86,7 @@ jobs:
           # having landed its half. Say that, rather than letting npm report
           # a bare "Missing script" that looks like a broken workflow.
           if ! node -e "process.exit(require('./package.json').scripts['e2e:contract'] ? 0 : 1)"; then
-            echo "::error::${BOT_REPO}@${{ inputs.bot_ref || 'main' }} has no 'e2e:contract' script."
+            echo "::error::${BOT_REPO}@${BOT_REF} has no 'e2e:contract' script."
             echo "The contract check lives in the bot repo — it asserts the bot's expectations of us."
             echo "Land the bot's half first; this job goes green once that script exists on its default branch."
             exit 1

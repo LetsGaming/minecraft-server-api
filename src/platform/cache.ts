@@ -61,17 +61,28 @@ export function cached<T>(
 ): Cached<T> {
   let entry: CacheEntry<T> | null = null;
   let inFlight: Promise<CacheEntry<T>> | null = null;
+  /**
+   * Bumped by invalidate(). W-017: a load that started before an invalidate
+   * read the files before the change (a mod install, a backup delete); it
+   * must neither be cached nor be handed to a caller who asked after the
+   * change, or the old listing comes back as fresh for the whole TTL.
+   */
+  let generation = 0;
 
   function refresh(): Promise<CacheEntry<T>> {
-    inFlight ??= load()
+    if (inFlight) return inFlight;
+    const started = generation;
+    const run: Promise<CacheEntry<T>> = load()
       .then((value) => {
-        entry = { value, at: Date.now() };
-        return entry;
+        const result = { value, at: Date.now() };
+        if (started === generation) entry = result;
+        return result;
       })
       .finally(() => {
-        inFlight = null;
+        if (inFlight === run) inFlight = null;
       });
-    return inFlight;
+    inFlight = run;
+    return run;
   }
 
   return {
@@ -87,6 +98,9 @@ export function cached<T>(
     peek: () => entry,
     invalidate: () => {
       entry = null;
+      generation++;
+      // The running load is not ours any more; the next get() starts afresh.
+      inFlight = null;
     },
   };
 }

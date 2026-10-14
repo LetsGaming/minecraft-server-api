@@ -31,6 +31,9 @@ import type {
 import { PRUNE_SCRIPT } from "./scripts.js";
 const PRUNE_DIR = path.join("common", "prune");
 
+/** Parameters up to this size go as an argument; larger ones on stdin (W-016). */
+const PARAMS_ARG_MAX_BYTES = 64 * 1024;
+
 /** A scan reads the whole world; an hour is a stuck process, not a slow disk. */
 export const PRUNE_SCAN_TIMEOUT_MS = 60 * 60_000;
 export const PRUNE_SETTINGS_TIMEOUT_MS = 20_000;
@@ -228,12 +231,18 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
   }
 
   /** Runs a short mode of the script; the last output line is one JSON object. */
-  async function scriptCall(args: string[], label: string, timeoutMs = PRUNE_SETTINGS_TIMEOUT_MS): Promise<Record<string, unknown>> {
+  async function scriptCall(
+    args: string[],
+    label: string,
+    timeoutMs = PRUNE_SETTINGS_TIMEOUT_MS,
+    input?: string,
+  ): Promise<Record<string, unknown>> {
     const script = await scriptPath();
     if (!script) throw new PruneUnavailableError();
     const res = await run(cfg, [interpreter("node"), script, ...args], {
       timeoutMs,
       label,
+      ...(input !== undefined ? { input } : {}),
     });
     let parsed: unknown;
     try {
@@ -248,15 +257,25 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
     return parsed;
   }
 
-  async function settingsCall(args: string[]): Promise<PruneParams> {
-    const parsed = await scriptCall(args, "Prune settings");
+  async function settingsCall(args: string[], input?: string): Promise<PruneParams> {
+    const parsed = await scriptCall(args, "Prune settings", PRUNE_SETTINGS_TIMEOUT_MS, input);
     if (!isRecord(parsed.params)) throw new PruneScriptError("failed");
     return parsed.params as unknown as PruneParams;
   }
 
   const getPruneSettings = (): Promise<PruneParams> => settingsCall(["--settings=get"]);
-  const setPruneSettings = (params: PruneParams): Promise<PruneParams> =>
-    settingsCall(["--settings=set", `--params=${JSON.stringify(params)}`]);
+  /**
+   * W-016: a large manual selection serialises past Linux's 128 KiB limit for
+   * one argument, so the spawn failed. Big parameters go on stdin, the way a
+   * scan sends them; small ones stay an argument, which every version of the
+   * script understands.
+   */
+  const setPruneSettings = (params: PruneParams): Promise<PruneParams> => {
+    const json = JSON.stringify(params);
+    return Buffer.byteLength(json) <= PARAMS_ARG_MAX_BYTES
+      ? settingsCall(["--settings=set", `--params=${json}`])
+      : settingsCall(["--settings=set", "--params-stdin"], json);
+  };
 
   /** The dimensions of the world with their region counts, from directory listings only. */
   async function getPruneDimensions(): Promise<PruneDimensions> {

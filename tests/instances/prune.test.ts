@@ -57,13 +57,15 @@ function setup(withScript = true) {
   if (withScript) touch(path.join(fx.cfg.scriptsDir, PRUNE_SCRIPT));
   const spawn = fakeSpawn();
   const runCalls: string[][] = [];
+  const runInputs: Array<string | undefined> = [];
   let runOutput = JSON.stringify({ ok: true, params: SUMMARY.params });
-  const run = async (_cfg: unknown, command: string[]) => {
+  const run = async (_cfg: unknown, command: string[], opts: { input?: string }) => {
     runCalls.push(command);
+    runInputs.push(opts?.input);
     return { output: runOutput, stderr: "", exitCode: 0 };
   };
   const prune = createPrune(fx.cfg, { spawnJob: spawn.spawnJob as never, run: run as never });
-  return { prune, spawn, runCalls, setRunOutput: (o: string) => (runOutput = o) };
+  return { prune, spawn, runCalls, runInputs, setRunOutput: (o: string) => (runOutput = o) };
 }
 
 describe("scan progress, cancel, dimensions and status", () => {
@@ -258,6 +260,14 @@ describe("settings", () => {
     expect(runCalls[0]).toContain("--settings=get");
     expect(runCalls[1]![2]).toBe("--settings=set");
     expect(JSON.parse(runCalls[1]![3]!.replace("--params=", "")).thresholdMinutes).toBe(9);
+  });
+
+  it("sends a large selection on stdin instead of an argument (W-016)", async () => {
+    const { prune, runCalls, runInputs } = setup();
+    const big = { ...SUMMARY.params, manual: Array.from({ length: 2500 }, (_, i) => ({ op: "add", x1: i, z1: i, x2: i + 99, z2: i + 99, dimension: "minecraft:overworld" })) };
+    await prune.setPruneSettings(big as never);
+    expect(runCalls[0]!.slice(2)).toEqual(["--settings=set", "--params-stdin"]);
+    expect(JSON.parse(runInputs[0]!).manual).toHaveLength(2500);
   });
 
   it("turns a script failure into a fixed code", async () => {

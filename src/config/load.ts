@@ -68,6 +68,12 @@ function normalisePort(id: string, raw: unknown): number {
 
 export const MIN_API_KEY_LENGTH = 32;
 const LINUX_USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
+/**
+ * The instance id names the screen session, the RCON_PASSWORD_<ID> variable
+ * and the job record file, and appears in every route. Keep it to what all
+ * of those take literally.
+ */
+const INSTANCE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * Problems that make a resolved config unsafe to run, as operator-facing
@@ -83,6 +89,11 @@ export function validateConfig(config: AppConfig): string[] {
     );
   }
   for (const [id, inst] of Object.entries(config.instances)) {
+    if (!INSTANCE_ID_RE.test(id)) {
+      problems.push(
+        `Instance id ${JSON.stringify(id)} may only use letters, digits, "_" and "-" (at most 64).`,
+      );
+    }
     if (!LINUX_USER_RE.test(inst.linuxUser)) {
       problems.push(
         `Instance "${id}": linuxUser ${JSON.stringify(inst.linuxUser)} is not a valid Linux user name ` +
@@ -136,6 +147,18 @@ function loadJsonConfig(filePath: string): AppConfig {
   const instances: Record<string, InstanceConfig> = {};
   for (const [id, inst] of Object.entries(raw.instances)) {
     instances[id] = normaliseInstance(id, inst as RawInstance);
+  }
+
+  // A non-string key used to skip the length check and then fail every
+  // request with a 500; a bad port failed at listen() with a vaguer message.
+  if (raw.apiKey !== undefined && typeof raw.apiKey !== "string") {
+    fail(`${filePath}: "apiKey" must be a string.`);
+  }
+  if (
+    raw.port !== undefined &&
+    !(Number.isInteger(raw.port) && raw.port >= 1 && raw.port <= 65535)
+  ) {
+    fail(`${filePath}: "port" must be a whole number from 1 to 65535.`);
   }
 
   return {

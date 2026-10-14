@@ -44,3 +44,15 @@ describe("validateConfig", () => {
     expect(validateConfig(config({ user }))).toEqual([]);
   });
 });
+
+describe("instance ids", () => {
+  it.each(["survival", "smp_2", "creative-1"])("accepts %s", (id) => {
+    const c = config();
+    expect(validateConfig({ ...c, instances: { [id]: c.instances.survival! } })).toEqual([]);
+  });
+
+  it.each(["a b", "x;y", "../up", "a.b", ""])("rejects %j", (id) => {
+    const c = config();
+    expect(validateConfig({ ...c, instances: { [id]: c.instances.survival! } }).join()).toMatch(/Instance id/);
+  });
+});

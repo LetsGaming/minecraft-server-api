@@ -72,3 +72,21 @@ describe("readLifecycleEvents", () => {
     expect(again.events).toEqual([]);
   });
 });
+
+describe("an oversized line (W-019)", () => {
+  it("is skipped instead of stalling the cursor forever", async () => {
+    const huge = `{"pad":"${"x".repeat(300 * 1024)}"}\n`;
+    const after = line({ ts: 9, type: "jvm_start" });
+    const { events } = setup(huge + after);
+    let cursor = 0;
+    const seen: unknown[] = [];
+    for (let i = 0; i < 5; i++) {
+      const r = await events.readLifecycleEvents(cursor);
+      seen.push(...r.events.map((e) => e.type));
+      if (r.next === cursor) break;
+      cursor = r.next;
+    }
+    expect(seen).toEqual(["jvm_start"]);
+    expect(cursor).toBe(Buffer.byteLength(huge + after));
+  });
+});
