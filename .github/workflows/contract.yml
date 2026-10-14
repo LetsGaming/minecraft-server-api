@@ -77,11 +77,15 @@ jobs:
         run: npm ci && npm run build
 
       - name: Build the bot
+        id: bot-build
+        # Advisory like the check: a bot that does not build is not ours to fix.
+        continue-on-error: true
         working-directory: bot
         run: npm ci && npm run build
 
       - name: Contract check
         id: contract
+        if: steps.bot-build.outcome == 'success'
         # Advisory (see the header): the bot lagging behind does not fail us.
         continue-on-error: true
         working-directory: bot
@@ -96,9 +100,15 @@ jobs:
           npm run e2e:contract
 
       - name: Report a bot that has not caught up
-        if: steps.contract.outcome == 'failure'
+        if: steps.bot-build.outcome == 'failure' || steps.contract.outcome == 'failure'
+        env:
+          BUILD_FAILED: ${{ steps.bot-build.outcome == 'failure' }}
         run: |
-          msg="${BOT_REPO}@${BOT_REF} disagrees with this wrapper (see the Contract check step). The wrapper is not blocked; the bot needs a change before it can use this version."
+          if [ "$BUILD_FAILED" = "true" ]; then
+            msg="${BOT_REPO}@${BOT_REF} does not build (see the Build the bot step), so the contract was not checked. The wrapper is not blocked."
+          else
+            msg="${BOT_REPO}@${BOT_REF} disagrees with this wrapper (see the Contract check step). The wrapper is not blocked; the bot needs a change before it can use this version."
+          fi
           echo "::warning title=bot contract::${msg}"
           {
             echo "### Bot contract: ${BOT_REPO}@${BOT_REF} has not caught up"
