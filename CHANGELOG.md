@@ -14,6 +14,8 @@ unchanged.
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-14
+
 ### Fixed
 
 - Starting an upgrade no longer fails with a 400 when the compatibility check listed a mod name the wrapper could not look up (for example `sit!`); the list is now only checked for characters that would break the argument.
