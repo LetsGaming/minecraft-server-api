@@ -19,6 +19,17 @@ Intended as the remote backend for [minecraft-bot](https://github.com/LetsGaming
 
 ### Standalone
 
+From a [release](https://github.com/LetsGaming/minecraft-server-api/releases) (already built; check the tarball against its `.sha256`):
+
+```bash
+v=4.1.0
+curl -fsSLO "https://github.com/LetsGaming/minecraft-server-api/releases/download/v$v/mc-api-server-$v.tar.gz"
+tar -xzf "mc-api-server-$v.tar.gz" && cd "mc-api-server-$v"
+npm ci --omit=dev
+```
+
+Or from source:
+
 ```bash
 git clone <repo-url> mc-api-server
 cd mc-api-server
@@ -52,7 +63,7 @@ When setting up a server with [minecraft-server-setup](https://github.com/LetsGa
 }
 ```
 
-The key must be at least 32 characters (see [Security](#security)). The setup script clones this repo, installs dependencies, builds, and creates a systemd service automatically.
+The key must be at least 32 characters (see [Security](#security)). The setup suite installs the release its `api-server-release.json` pins (downloaded, checked against its sha256, `npm ci --omit=dev`) and creates a systemd service automatically; its `migrate.sh` upgrades the install when the pin moves.
 
 ---
 
@@ -228,6 +239,13 @@ npm test            # vitest
 npm run openapi:generate   # rebuild openapi.json from the router
 npm run openapi:check      # fail when the committed openapi.json is stale
 ```
+
+### Releasing
+
+1. Move the `[Unreleased]` entries in `CHANGELOG.md` under `## [<version>] - <date>` and set `version` in `package.json` (and the lockfile: `npm install --package-lock-only`).
+2. Merge, then tag that commit: `git tag v<version> && git push origin v<version>`.
+
+`.github/workflows/release.yml` runs the checks, packs `mc-api-server-<version>.tar.gz` with `npm run pack:release` (built `dist/` and what a host runs, no sources) and publishes it with its `.sha256` as a GitHub Release, with the changelog section as notes. With the `SETUP_REPO_TOKEN` secret set it also opens the pull request in minecraft-server-setup that moves its pin to the new release. `npm run build && npm run pack:release` builds the same tarball locally in `release/`.
 
 The test suite pins the security invariants (auth semantics, UUID/args allowlists, path-traversal guards, RCON packet validation, the screen-command sanitiser) and exercises every route against a scaffolded instance directory, including the SSE stream over a real socket.
 
