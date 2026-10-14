@@ -1,0 +1,42 @@
+# Weekly check of the SETUP_REPO_TOKEN secret the release workflow uses to open
+# the pin bump in minecraft-server-setup (scripts/check-setup-token.mjs).
+#
+# Fine-grained tokens expire, at most one year after they are created. This
+# fails two weeks before that, and at once when the token is missing, revoked,
+# lacks access to the setup repository or has no expiry or a longer one, so
+# GitHub's failed-workflow mail arrives while there is time to renew it rather
+# than when a release tag is already out.
+name: setup token
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/check-setup-token.mjs"
+      - ".github/workflows/setup-token.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: scripts/check-setup-token.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Check SETUP_REPO_TOKEN
+        env:
+          GH_TOKEN: ${{ secrets.SETUP_REPO_TOKEN }}
+        run: node scripts/check-setup-token.mjs --repo LetsGaming/minecraft-server-setup --warn-days 30 --fail-days 14
