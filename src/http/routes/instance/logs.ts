@@ -89,7 +89,7 @@ export function registerLogRoutes(
       // slot taken by the onRequest hook would be held for the life of the
       // stream. A stream is a subscription, not work in progress: release the
       // slot right away.
-      endRequest();
+      endRequest(req.raw);
       const res = reply.raw;
       res.writeHead(200, {
         "Content-Type": "text/event-stream",

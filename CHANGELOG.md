@@ -14,6 +14,17 @@ unchanged.
 
 ## [Unreleased]
 
+### Security
+
+- **Console text can no longer run a second command through screen.** `screen -X stuff` turns `^M` and `\015` into Enter and expands `$VAR`, so a chat-bridge message or a ban reason like `hi^Mop Mallory` ran `op Mallory` on instances without RCON (and on RCON instances after an RCON error). `\`, `^` and `$` are now escaped, so the line reaches the console exactly as sent and as one line; tellraw JSON is unchanged (`src/instances/commands.ts`).
+
+### Fixed
+
+- **Aborted requests no longer lock the API into 503.** A request whose client hung up before the reply never gave back its in-flight slot; after 33 of them every route except `/health` and `/metrics` answered 503 until a restart. The slot is now released when the socket closes too, once per request (`src/http/app.ts`, `src/platform/metrics.ts`).
+- **A long RCON reply no longer jams RCON.** Replies of a full 4096 bytes were rejected but left in the buffer, so every later command timed out. They are accepted now, and a stream that really is out of step drops the connection and reconnects (`src/platform/rcon/packet.ts`, `src/platform/rcon/client.ts`).
+- **A command whose RCON reply went missing is not sent again through screen.** The server has usually run it already, so the fallback ran it twice. It is reported as sent with no reply (`via: "rcon"`, `result: null`, `rconError`) instead (`src/instances/commands.ts`).
+- **`/list` no longer reports zero players while people are online.** A health probe inside the "recent RCON success" window skipped `list` and had no roster to show; it now reuses a roster only as recent as that window and asks for one otherwise (`src/instances/health.ts`).
+
 ## [4.1.0] - 2026-10-14
 
 ### Fixed

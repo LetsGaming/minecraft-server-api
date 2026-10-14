@@ -43,12 +43,29 @@ function percentile(sorted: number[], p: number): number {
   return sorted[idx]!;
 }
 
-export function beginRequest(): void {
+/** Requests holding an in-flight slot, keyed by their raw request object. */
+const holding = new WeakSet<object>();
+
+/**
+ * Take an in-flight slot. With a `handle` (the raw request), the slot is
+ * released at most once however many paths call endRequest for it.
+ */
+export function beginRequest(handle?: object): void {
+  if (handle) {
+    if (holding.has(handle)) return;
+    holding.add(handle);
+  }
   inFlight++;
   if (inFlight > peakInFlight) peakInFlight = inFlight;
 }
 
-export function endRequest(): void {
+/**
+ * Give the slot back. W-002: a request can end three ways (a sent reply, a
+ * client that hung up first, a hijacked stream) and each one calls this, so
+ * it must be idempotent per request or the count drifts.
+ */
+export function endRequest(handle?: object): void {
+  if (handle && !holding.delete(handle)) return;
   inFlight = Math.max(0, inFlight - 1);
 }
 

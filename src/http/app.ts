@@ -112,11 +112,16 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
   // Every request is timed and counted; nothing here is gated behind
   // MC_DEBUG because it is O(1) per request and is exactly what is needed
   // to answer "what was happening right before this went unreachable".
-  app.addHook("onRequest", async () => {
-    beginRequest();
+  app.addHook("onRequest", async (req, reply) => {
+    beginRequest(req.raw);
+    // W-002: Fastify skips onResponse when the client hung up before the
+    // reply was sent, which leaked one slot per aborted request until every
+    // route answered 503. The socket closing releases it too; endRequest
+    // counts each request once whichever path gets there first.
+    reply.raw.once("close", () => endRequest(req.raw));
   });
   app.addHook("onResponse", async (req, reply) => {
-    endRequest();
+    endRequest(req.raw);
     const durationMs = reply.elapsedTime;
     const routePath = req.routeOptions.url ?? req.url;
     recordRequest(req.method, routePath, reply.statusCode, durationMs);
