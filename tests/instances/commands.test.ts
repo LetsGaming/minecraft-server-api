@@ -4,7 +4,7 @@ const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("child_process", () => ({ execFile: execFileMock }));
 
 import { createCommands, CommandDeliveryError } from "../../src/instances/commands.js";
-import type { RconClient } from "../../src/platform/rcon/client.js";
+import { RconNoReplyError, type RconClient } from "../../src/platform/rcon/client.js";
 import type { InstanceConfig } from "../../src/config/types.js";
 
 const cfg = { id: "survival", linuxUser: "minecraft" } as InstanceConfig;
@@ -47,6 +47,16 @@ describe("sendCommand", () => {
       "-n", "-u", "minecraft", "screen", "-S", "survival", "-X", "stuff", "/say hi\r",
     ]);
     expect(opts.timeout).toBe(15_000);
+  });
+
+  it("never re-sends through screen once RCON took the command (W-005)", async () => {
+    for (const reason of ["RCON timeout", "RCON lost"]) {
+      const out = await createCommands(cfg, rconReturning(new RconNoReplyError(reason))).sendCommand(
+        "give Steve diamond",
+      );
+      expect(out).toEqual({ result: null, via: "rcon", sent: true, rconError: reason });
+    }
+    expect(execFileMock).not.toHaveBeenCalled();
   });
 
   it("truncates a long RCON error", async () => {

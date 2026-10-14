@@ -87,9 +87,11 @@ export class RconClient {
       this._socket.destroy();
       this._socket = null;
     }
+    // W-005: these commands were already written; the server may have run
+    // them, so they must not be sent again another way.
     for (const [, cb] of this._pending) {
       clearTimeout(cb.timer);
-      cb.reject(new Error("RCON lost"));
+      cb.reject(new RconNoReplyError("RCON lost"));
     }
     this._pending.clear();
     this._buf = Buffer.alloc(0);
@@ -226,8 +228,15 @@ export class RconClient {
         this._pending.delete(id);
         reject(new RconNoReplyError("RCON timeout"));
       }, timeoutMs);
+      const socket = this._socket;
+      if (!socket || socket.destroyed) {
+        // Lost between auth and now: nothing was written, a fallback is safe.
+        clearTimeout(timer);
+        reject(new Error("RCON lost before send"));
+        return;
+      }
       this._pending.set(id, { resolve, reject, timer });
-      this._socket?.write(encodePkt(id, 2, command));
+      socket.write(encodePkt(id, 2, command));
     });
   }
 }

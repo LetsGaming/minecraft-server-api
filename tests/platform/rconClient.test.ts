@@ -4,7 +4,7 @@ import net from "net";
 import { RconClient } from "../../src/platform/rcon/client.js";
 import { decodePkt, encodePkt } from "../../src/platform/rcon/packet.js";
 
-type Mode = "drop" | "ok" | "silent" | "long" | "garbage" | "mute";
+type Mode = "drop" | "ok" | "silent" | "long" | "garbage" | "mute" | "hangup";
 
 let mode: Mode;
 let server: net.Server;
@@ -37,6 +37,10 @@ beforeEach(async () => {
       if (pkt.type === 3) sock.write(encodePkt(1, 2, ""));
       else if (pkt.type === 2) {
         if (mode === "mute") return;
+        if (mode === "hangup") {
+          sock.destroy();
+          return;
+        }
         if (mode === "garbage") {
           const bad = Buffer.alloc(20);
           bad.writeInt32LE(-5, 0);
@@ -123,5 +127,18 @@ describe("RconClient framing (W-003)", () => {
     await settle();
     await vi.advanceTimersByTimeAsync(5_000);
     await assertion;
+  });
+});
+
+describe("RconClient connection loss (W-005)", () => {
+  it("reports a command whose connection dropped after the write as RconNoReplyError", async () => {
+    mode = "ok";
+    const client = new RconClient("127.0.0.1", port, "pw");
+    await client.connect();
+    mode = "hangup";
+    await expect(client.send("give Steve diamond")).rejects.toMatchObject({
+      name: "RconNoReplyError",
+      message: "RCON lost",
+    });
   });
 });

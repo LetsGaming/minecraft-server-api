@@ -169,7 +169,10 @@ export const FEATURES: Record<string, FeatureSpec> = {
       "addressed by an opaque id rather than a path.",
   },
   "mod-configs": {
-    version: 1,
+    // v2: secrets come back redacted (and are restored when sent back
+    // unchanged), protected server.properties keys need `allowProtected`,
+    // and a revert requires If-Match like a write.
+    version: 2,
     routes: [
       "GET /instances/:id/configs",
       "GET /instances/:id/configs/:fileId",

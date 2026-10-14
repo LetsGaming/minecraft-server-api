@@ -994,16 +994,39 @@ export const ScriptRunRequest = named(
   ),
 );
 
+const allowProtected = {
+  ...boolean,
+  description:
+    "Allow changes to protected server.properties keys (RCON, online-mode, " +
+    "whitelist, permission levels, level-name, ports). Without it such a " +
+    "change is refused with 403.",
+};
+
 export const ConfigWriteRequest = named(
   "ConfigWriteRequest",
-  object({ text: string }),
+  object(
+    {
+      text: {
+        ...string,
+        description:
+          "The new contents. Secret values come back redacted from a read; " +
+          "a redacted line sent back unchanged keeps its real value.",
+      },
+      allowProtected,
+    },
+    { required: ["text"] },
+  ),
 );
 
 export const ConfigRevertRequest = named(
   "ConfigRevertRequest",
-  object({
-    snapshot: { ...string, description: "A name from the file's `snapshots`." },
-  }),
+  object(
+    {
+      snapshot: { ...string, description: "A name from the file's `snapshots`." },
+      allowProtected,
+    },
+    { required: ["snapshot"] },
+  ),
 );
 
 export const ModAddRequest = named(

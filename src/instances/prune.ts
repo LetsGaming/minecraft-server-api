@@ -13,6 +13,8 @@ import { randomUUID } from "crypto";
 import fsp from "fs/promises";
 import path from "path";
 
+import { FileTooLargeError, isInside, readFileNoFollow } from "../platform/safeFs.js";
+
 import { log } from "../platform/logger.js";
 import { interpreter, runAsInstanceUser, spawnJobAsInstanceUser, type JobSpawnHandle } from "../platform/spawn.js";
 import type { InstanceConfig } from "../config/types.js";
@@ -299,6 +301,21 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
   }
 
   /**
+   * A file the prune script wrote, under its directory. The script runs as
+   * the instance user, which owns that directory, so its realpath is checked
+   * against the scripts directory before anything is read (W-007); the file
+   * itself is then opened without following a link.
+   */
+  async function pruneFile(relative: string): Promise<string> {
+    const dir = path.join(cfg.scriptsDir, PRUNE_DIR);
+    const realDir = await fsp.realpath(path.join(dir, path.dirname(relative)));
+    if (!isInside(realDir, await fsp.realpath(cfg.scriptsDir))) {
+      throw new PruneScriptError("failed");
+    }
+    return path.join(realDir, path.basename(relative));
+  }
+
+  /**
    * The terrain tile of one region as PNG bytes, drawn by the script or taken from its cache.
    * Null when the dimension or the region does not exist. `etag` names the picture: it changes
    * when the region file does.
@@ -318,10 +335,14 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
       }
       const relative = parsed.tile;
       if (typeof relative !== "string" || !TILE_PATH_RE.test(relative)) throw new PruneScriptError("failed");
-      const file = path.join(cfg.scriptsDir, PRUNE_DIR, "tiles", ...relative.split("/"));
-      const stat = await fsp.stat(file);
-      if (stat.size > PRUNE_TILE_MAX_BYTES) throw new PruneScriptError("tile_too_large");
-      const png = await fsp.readFile(file);
+      const file = await pruneFile(path.join("tiles", ...relative.split("/")));
+      let png: Buffer;
+      try {
+        png = await readFileNoFollow(file, PRUNE_TILE_MAX_BYTES);
+      } catch (err) {
+        if (err instanceof FileTooLargeError) throw new PruneScriptError("tile_too_large");
+        throw err;
+      }
       return { png, etag: `"${path.basename(relative, ".png")}"` };
     });
   }
@@ -351,13 +372,11 @@ export function createPrune(cfg: InstanceConfig, deps: PruneDeps = {}) {
    * be megabytes, past what a script's output is allowed to carry.
    */
   async function readPruneMap(planId: string, dimensionIndex: number): Promise<string | null> {
-    const file = path.join(cfg.scriptsDir, PRUNE_DIR, `${planId}.map.${dimensionIndex}.json`);
     try {
-      const stat = await fsp.stat(file);
-      if (stat.size > PRUNE_MAP_MAX_BYTES) throw new PruneScriptError("map_too_large");
-      return await fsp.readFile(file, "utf8");
+      const file = await pruneFile(`${planId}.map.${dimensionIndex}.json`);
+      return (await readFileNoFollow(file, PRUNE_MAP_MAX_BYTES)).toString("utf8");
     } catch (err) {
-      if (err instanceof PruneScriptError) throw err;
+      if (err instanceof FileTooLargeError) throw new PruneScriptError("map_too_large");
       return null;
     }
   }

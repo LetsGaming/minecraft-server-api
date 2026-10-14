@@ -284,7 +284,7 @@ describe("read / write / revert", () => {
 
     const revert = await app.inject({
       method: "POST", url: `/instances/smp/configs/${file.id}/revert`,
-      headers: { ...auth, "content-type": "application/json" },
+      headers: { ...auth, "content-type": "application/json", "if-match": put.json().etag },
       payload: { snapshot: stamp },
     });
     expect(revert.statusCode).toBe(200);
@@ -297,7 +297,7 @@ describe("read / write / revert", () => {
     for (const bad of ["../../etc/passwd", "/etc/passwd", "..%2Fx"]) {
       const res = await app.inject({
         method: "POST", url: `/instances/smp/configs/${file.id}/revert`,
-        headers: { ...auth, "content-type": "application/json" },
+        headers: { ...auth, "content-type": "application/json", "if-match": "x" },
         payload: { snapshot: bad },
       });
       expect(res.statusCode).toBe(404);
