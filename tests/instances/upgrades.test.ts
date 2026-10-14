@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import fs from "fs";
 import path from "path";
 
 import { makeFixture, touch, type Fixture } from "../helpers/instanceFixture.js";
@@ -207,5 +208,57 @@ describe("after a wrapper restart", () => {
   it("answers null when there has been no upgrade", async () => {
     const { upgrades } = setup();
     expect(await upgrades.getCurrentUpgrade(0)).toBeNull();
+  });
+});
+
+describe("a job that outlives the wrapper (W-009)", () => {
+  function recordFixture(alive: () => boolean) {
+    fx = makeFixture();
+    touch(path.join(fx.cfg.scriptsDir, "update", "upgrade.sh"));
+    const recordDir = path.join(fx.root, "jobs");
+    fs.mkdirSync(recordDir, { recursive: true });
+    const outFile = path.join(recordDir, "upgrade-1.out");
+    fs.writeFileSync(outFile, "");
+    fs.writeFileSync(
+      path.join(recordDir, `${fx.cfg.id}.upgrade.json`),
+      JSON.stringify({ pgid: 999_999, jobId: "11111111-2222-4333-8444-555555555555", kind: "upgrade", mcVersion: "1.21.4", startedAt: 1, files: [outFile] }),
+    );
+    fs.mkdirSync(path.join(fx.cfg.scriptsDir, "common"), { recursive: true });
+    fs.writeFileSync(
+      path.join(fx.cfg.scriptsDir, "common", "upgrade-status.ndjson"),
+      '{"seq":1,"ts":1,"phase":"backup","status":"running","msg":""}\n',
+    );
+    const slot = createOperationSlot();
+    const upgrades = createUpgrades(fx.cfg, slot, {
+      spawnJob: fakeSpawn().spawnJob as never,
+      recordDir,
+      isAlive: alive,
+      recoveryPollMs: 10,
+    });
+    return { slot, upgrades, recordDir, outFile };
+  }
+
+  it("keeps the slot for a recorded job that still runs, and reports it running", async () => {
+    let alive = true;
+    const { slot, upgrades, recordDir, outFile } = recordFixture(() => alive);
+    expect(slot.current()).toEqual({ kind: "upgrade", jobId: "11111111-2222-4333-8444-555555555555" });
+    expect(await upgrades.getCurrentUpgrade()).toMatchObject({
+      jobId: "11111111-2222-4333-8444-555555555555",
+      state: "running",
+      mcVersion: "1.21.4",
+    });
+
+    alive = false;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(slot.current()).toBeNull();
+    expect(fs.existsSync(path.join(recordDir, `${fx.cfg.id}.upgrade.json`))).toBe(false);
+    expect(fs.existsSync(outFile)).toBe(false);
+    expect(await upgrades.getCurrentUpgrade()).toMatchObject({ state: "failed", error: "interrupted" });
+  });
+
+  it("drops the record of a job that is gone", () => {
+    const { slot, recordDir } = recordFixture(() => false);
+    expect(slot.current()).toBeNull();
+    expect(fs.existsSync(path.join(recordDir, `${fx.cfg.id}.upgrade.json`))).toBe(false);
   });
 });

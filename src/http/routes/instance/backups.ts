@@ -36,6 +36,16 @@ const FILE_ID_RE = /^[A-Za-z0-9_-]{22}$/;
 const DEFAULT_PAGE = 50;
 
 /** Parse a Range header of the form `bytes=start-[end]`. */
+/** The restore was refused before it ran; carries the reply to send. */
+class RestoreRefused extends Error {
+  constructor(
+    readonly status: 409 | 503,
+    readonly body: { error: string; state?: ServerState },
+  ) {
+    super(body.error);
+  }
+}
+
 function parseRange(
   header: string | undefined,
   size: number,
@@ -202,7 +212,7 @@ export function registerBackupFileRoutes(
       summary: "Delete one archive",
       tags: ["backups"],
       params: instanceParams({ fileId: "Opaque id from the backup index." }),
-      response: { 200: BackupFileDeleted, ...errors(400, 404, 500) },
+      response: { 200: BackupFileDeleted, ...errors(400, 404, 423, 500) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
@@ -233,7 +243,7 @@ export function registerBackupFileRoutes(
         "and exit code.",
       tags: ["backups"],
       params: instanceParams({ fileId: "Opaque id from the backup index." }),
-      response: { 200: ScriptResult, ...errors(400, 404, 409, 500, 503) },
+      response: { 200: ScriptResult, ...errors(400, 404, 409, 423, 500, 503) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
@@ -251,27 +261,32 @@ export function registerBackupFileRoutes(
         // the only state that proves no JVM holds the files; an unresponsive
         // server is still a running one.
         // The cached health answer can be seconds stale, so this asks for a
-        // probe made now, and refuses when none can be completed.
-        let state: ServerState;
-        try {
-          ({ state } = await entry.getFreshHealth());
-        } catch {
-          return reply.status(503).send({
-            error: "Could not verify that the server is offline. Try again shortly.",
-          });
-        }
-        if (state !== "offline") {
-          return reply.status(409).send({
-            error: "Server must be offline to restore a backup. Stop it first.",
-            state,
-          });
-        }
+        // probe made now, and refuses when none can be completed. It runs
+        // holding the slot (W-008), so nothing can start the server between
+        // the probe and the restore.
+        const ensureOffline = async (): Promise<void> => {
+          let state: ServerState;
+          try {
+            ({ state } = await entry.getFreshHealth());
+          } catch {
+            throw new RestoreRefused(503, {
+              error: "Could not verify that the server is offline. Try again shortly.",
+            });
+          }
+          if (state !== "offline") {
+            throw new RestoreRefused(409, {
+              error: "Server must be offline to restore a backup. Stop it first.",
+              state,
+            });
+          }
+        };
 
         // The path handed to the script is the one the wrapper resolved, never
         // one the client described. That is the whole reason restore is not a
         // /scripts/run action (see instances/restore.ts).
-        return await entry.restore(found.absPath);
+        return await entry.restore(found.absPath, ensureOffline);
       } catch (err) {
+        if (err instanceof RestoreRefused) return reply.status(err.status).send(err.body);
         return internalError(reply, `backups/restore ${req.params.id}`, err);
       }
     },

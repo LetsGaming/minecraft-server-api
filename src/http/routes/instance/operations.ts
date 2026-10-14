@@ -163,8 +163,12 @@ export function registerOperationRoutes(
       const since = sinceOf(req.query.since);
       if (since === null) return reply.status(400).send({ error: "Invalid since" });
       const job = entry.getUpgrade(req.params.jobId, since);
-      if (!job) return reply.status(404).send({ error: "Unknown or expired job" });
-      return job;
+      if (job) return job;
+      // A job started before a wrapper restart lives on only in its record
+      // and the script's status file (W-009); `current` reads those.
+      const current = await entry.getCurrentUpgrade(since);
+      if (current?.jobId === req.params.jobId) return current;
+      return reply.status(404).send({ error: "Unknown or expired job" });
     },
   );
 

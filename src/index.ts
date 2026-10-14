@@ -7,6 +7,21 @@ import { buildApp } from "./http/app.js";
 import { log } from "./platform/logger.js";
 import { WRAPPER_VERSION } from "./contracts/version.js";
 
+// W-009: a stray rejection used to take the process down mid-job. Log it and
+// keep serving; a real exception still exits (after logging) so the
+// supervisor restarts a process whose state can no longer be trusted. Jobs
+// survive that (see platform/spawn.ts).
+process.on("unhandledRejection", (reason) => {
+  log.error(
+    "api-server",
+    `Unhandled rejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`,
+  );
+});
+process.on("uncaughtException", (err) => {
+  log.error("api-server", `Uncaught exception: ${err.stack ?? err.message}`);
+  process.exit(1);
+});
+
 const config = loadConfig();
 
 // ── SEC-01: fail closed on missing API key ─────────────────────────────
@@ -55,6 +70,14 @@ try {
     "api-server",
     `v${WRAPPER_VERSION} — instances: [${instanceList}] — listening on ${BIND_HOST}:${config.PORT}`,
   );
+  // W-022: the API key crosses the network in a header, in clear text.
+  if (BIND_HOST !== "127.0.0.1" && BIND_HOST !== "::1" && BIND_HOST !== "localhost") {
+    log.info(
+      "api-server",
+      "Listening beyond loopback over plain HTTP: keep it on a trusted network, " +
+        "or put a TLS reverse proxy in front (README § Security).",
+    );
+  }
 } catch (err) {
   log.error("api-server", `Failed to listen: ${(err as Error).message}`);
   process.exit(1);

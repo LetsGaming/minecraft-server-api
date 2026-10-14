@@ -52,7 +52,15 @@ export function createRestore(cfg: InstanceConfig, slot: OperationSlot = createO
    * with the listing that produced the path — duplicating it would create the
    * usual second copy that drifts.
    */
-  async function restore(absPath: string): Promise<ScriptResult> {
+  async function restore(
+    absPath: string,
+    /**
+     * Runs while the slot is held, before the script. W-008: the route's
+     * "server is offline" probe used to run before the slot was taken, so a
+     * start could slip in between the probe and the restore.
+     */
+    beforeRun: () => Promise<void> = async () => {},
+  ): Promise<ScriptResult> {
     const script = await scriptPath();
     if (!script) {
       throw new Error(`Script not found: ${path.join(cfg.scriptsDir, RESTORE_SCRIPT)}`);
@@ -61,12 +69,13 @@ export function createRestore(cfg: InstanceConfig, slot: OperationSlot = createO
     // Shares the spawn dance with the script and mod runners; see
     // platform/spawn.ts. The path here is one the wrapper resolved, never one
     // the client described — the reason restore is not a /scripts/run action.
-    return slot.run("restore", () =>
-      runAsInstanceUser(cfg, [interpreter("bash"), script, "--file", absPath, "--y"], {
+    return slot.run("restore", async () => {
+      await beforeRun();
+      return runAsInstanceUser(cfg, [interpreter("bash"), script, "--file", absPath, "--y"], {
         timeoutMs: RESTORE_TIMEOUT_MS,
         label: "Restore",
-      }),
-    );
+      });
+    });
   }
 
   return { restore, hasRestoreScript: async () => (await scriptPath()) !== null };

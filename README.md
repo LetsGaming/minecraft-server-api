@@ -112,7 +112,8 @@ The file is looked up at `./api-server-config.json` next to `index.js`, or where
 | `MC_API_KEY` | both modes | Overrides the API key (Docker/K8s secret injection) |
 | `MC_PORT` | both modes | Overrides the HTTP listen port |
 | `RCON_PASSWORD_<ID>` | both modes | Per-instance RCON password override, e.g. `RCON_PASSWORD_SURVIVAL` |
-| `MC_BIND_HOST` | both modes | Listen address (default `0.0.0.0`) |
+| `MC_BIND_HOST` | both modes | Listen address (default `0.0.0.0`). Use `127.0.0.1` when the bot runs on the same host |
+| `MC_STATE_DIR` | both modes | Where running jobs keep their output files and records (default `./state`). Must be writable by the wrapper's user and should not be inside a server directory |
 | `MC_BASH_PATH` / `MC_NODE_PATH` | both modes | Absolute paths of `bash` and `node` for the scripts the wrapper runs through `sudo`. Unset means a `PATH` lookup. Must match the paths in your sudoers rules; see [`docs/sudoers-setup.md`](./docs/sudoers-setup.md) |
 | `MC_TRUST_PROXY` | both modes | `true` = trust `X-Forwarded-For` for client IPs — **only behind a proxy that sets it**; see [Security](#security) |
 | `MC_SSE_MAX_CLIENTS` | both modes | Max concurrent `/logs/stream` clients per instance (default `50`) |
@@ -148,6 +149,10 @@ See [`variables.example.txt`](./variables.example.txt) for all keys. The file is
 - Wrapper log lines escape control, separator and bidi characters and are length-capped, so text from a script or a player cannot forge a log line.
 - `500` responses carry a fixed `{ "error": "Internal server error" }` body; failure detail (paths, stderr) goes to the wrapper log only.
 - **No route accepts a filesystem path.** Backup archives are addressed by an opaque `id` handed out by `/backups/files`, which the wrapper resolves against a listing it builds itself — so the path handed to a download or a restore script is always one this process chose, never one a client described. Traversal is not defended against here; it is unrepresentable. A `realpath` containment check sits behind that for the symlink case a `startsWith` guard cannot see.
+- **Plain HTTP.** The API key travels in a request header without encryption. That is fine on a trusted LAN or with the bot on the same host (`MC_BIND_HOST=127.0.0.1`). When the bot reaches the wrapper over a network you do not trust, put a TLS reverse proxy (nginx, Caddy) in front, bind the wrapper to loopback and set `MC_TRUST_PROXY=true`.
+- **The config editor hides secrets and guards server settings.** Values whose key looks like a credential (`rcon.password`, a bot token, a database password) come back redacted from a read and keep their real value when sent back unchanged. Changing protected `server.properties` keys (RCON, `online-mode`, the whitelist switches, permission levels, `level-name`, ports, `management-server-*`) needs `allowProtected: true` in the request; the bot sends it for its sysadmins only.
+- **Files owned by the server's user are never followed out of place.** Config files, snapshots, the log tail, prune output and backup downloads are opened without following a final symlink, and their directories must resolve inside the server, scripts or backups directory. Code running as the instance user (a plugin, a mod) cannot use a planted link to make the wrapper read or write its own config.
+- **Upgrade and prune jobs survive a wrapper restart.** They run in their own process group and write to files under `MC_STATE_DIR`, so they keep running when the wrapper stops, and the next wrapper keeps the instance busy until they end. Your supervisor must leave the group alone: the PM2 ecosystem file sets `treekill: false`; for a systemd unit set `KillMode=process`.
 - **`restore.sh` is deliberately not a `scripts/run` action.** Script arguments are validated against an allowlist that forbids `/`, precisely so a client cannot hand a path to a spawned shell — and restore needs an absolute path. Loosening that validator to fit would give the guard away for every script at once, so restore gets its own route and resolves the path itself.
 
 ---

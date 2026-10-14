@@ -55,7 +55,8 @@ With the API server running as `apiuser` and Minecraft as `minecraft`:
 
 ```
 # mc-api-server → minecraft: screen control + management scripts
-apiuser ALL=(minecraft) NOPASSWD: /usr/bin/screen
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/screen -S survival -X stuff *
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/screen -list
 apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/start.sh *
 apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/shutdown.sh *
 apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/smart_restart.sh *
@@ -64,6 +65,12 @@ apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/
 apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/backup/restore.sh *
 apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/misc/status.sh *
 ```
+
+The two `screen` rules are deliberately narrow. A bare `/usr/bin/screen`
+grant lets the API user run `screen -dm bash -c …`, which is a full shell as
+`minecraft`. Name the session literally, one `stuff` line per instance id: a
+sudoers `*` also matches spaces, so `screen -S * -X stuff *` would still
+match `screen -S x -dm bash -c … -X stuff y`.
 
 Mod operations need a separate `node` grant. Without it install, remove,
 update, enable and disable all fail with a generic `sudo` error:

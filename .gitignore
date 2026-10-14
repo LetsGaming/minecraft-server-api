@@ -5,3 +5,5 @@ variables.txt
 dist/
 release/
 .claude-flow/
+state/
+api-server-config.json

@@ -98,7 +98,9 @@ export function createOperations(cfg: InstanceConfig) {
     // a flat bundle shared by ten modules.
     indexBackupFiles: backupFiles.index,
     resolveBackupFile: backupFiles.resolve,
-    deleteBackupFile: backupFiles.remove,
+    // W-008: an upgrade or prune job restores from its own archive if it
+    // fails, so an archive is not deleted while any operation holds the slot.
+    deleteBackupFile: (id: string) => slot.run("backup-delete", () => backupFiles.remove(id)),
     indexConfigFiles: configFiles.index,
     readConfigFile: configFiles.read,
     writeConfigFile: configFiles.write,

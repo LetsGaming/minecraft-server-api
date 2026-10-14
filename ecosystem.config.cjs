@@ -71,6 +71,10 @@ module.exports = {
       // index.ts's own 3s belt-and-braces exit backs it up — this only
       // matters if both of those somehow stall.
       kill_timeout:  8000,
+      // An upgrade or prune job runs in its own process group and must
+      // survive a wrapper restart (the next wrapper picks it back up). PM2's
+      // default tree-kill would take it down with the wrapper.
+      treekill:      false,
 
       // ── Logging ──
       log_date_format: "YYYY-MM-DD HH:mm:ss",

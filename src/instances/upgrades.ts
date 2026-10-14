@@ -10,11 +10,18 @@
  * without a result line).
  */
 import { randomUUID } from "crypto";
+import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 
 import { log } from "../platform/logger.js";
-import { interpreter, spawnJobAsInstanceUser, type JobSpawnHandle } from "../platform/spawn.js";
+import {
+  interpreter,
+  jobStateDir,
+  processGroupAlive,
+  spawnJobAsInstanceUser,
+  type JobSpawnHandle,
+} from "../platform/spawn.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { UpgradeEvent, UpgradeJob, UpgradeResult } from "../contracts/wire.js";
 import { OperationBusyError, type OperationSlot } from "./operationSlot.js";
@@ -78,6 +85,40 @@ export interface UpgradeDeps {
     opts: Parameters<typeof spawnJobAsInstanceUser>[2],
   ) => JobSpawnHandle;
   now?: () => number;
+  /** Where the running job's record is kept; defaults to the wrapper's job state dir. */
+  recordDir?: string;
+  /** Liveness of a recorded job's process group. */
+  isAlive?: (pgid: number) => boolean;
+  /** How often a job recovered after a restart is checked for having ended. */
+  recoveryPollMs?: number;
+}
+
+/**
+ * The running job, on disk (W-009). The job outlives a wrapper restart; the
+ * jobs map and the slot do not. This record is how the next wrapper knows a
+ * job is still running, keeps the slot taken for it (so nobody stops or
+ * restarts the server under an upgrade), and reports it as running rather
+ * than interrupted.
+ */
+interface JobRecord {
+  pgid: number;
+  jobId: string;
+  kind: "upgrade" | "prune";
+  mcVersion: string;
+  startedAt: number;
+  files: string[];
+}
+
+function isJobRecord(v: unknown): v is JobRecord {
+  return (
+    isRecord(v) &&
+    typeof v.pgid === "number" &&
+    typeof v.jobId === "string" &&
+    (v.kind === "upgrade" || v.kind === "prune") &&
+    typeof v.mcVersion === "string" &&
+    typeof v.startedAt === "number" &&
+    Array.isArray(v.files)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -123,7 +164,56 @@ export function createUpgrades(
 ) {
   const spawnJob = deps.spawnJob ?? spawnJobAsInstanceUser;
   const now = deps.now ?? Date.now;
+  const isAlive = deps.isAlive ?? processGroupAlive;
   const jobs = new Map<string, Job>();
+  const recordPath = path.join(deps.recordDir ?? jobStateDir(), `${cfg.id}.upgrade.json`);
+
+  function writeRecord(record: JobRecord): void {
+    try {
+      fs.mkdirSync(path.dirname(recordPath), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(recordPath, JSON.stringify(record), { mode: 0o600 });
+    } catch (err) {
+      log.warn("upgrade", `${cfg.id}: could not record the running job: ${(err as Error).message}`);
+    }
+  }
+
+  function removeRecord(files: readonly string[] = []): void {
+    for (const f of [recordPath, ...files]) {
+      try {
+        fs.rmSync(f, { force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+  }
+
+  /** A job a previous wrapper process started that is still running. */
+  let recovered: JobRecord | null = null;
+
+  (function recover(): void {
+    let record: unknown;
+    try {
+      record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+    } catch {
+      return; // no record: nothing was running
+    }
+    if (!isJobRecord(record) || !isAlive(record.pgid)) {
+      removeRecord(isJobRecord(record) ? record.files : []);
+      return;
+    }
+    const release = slot.begin(record.kind, record.jobId);
+    if (!release) return;
+    recovered = record;
+    log.info("upgrade", `${cfg.id}: ${record.kind} job ${record.jobId} still running after a restart`);
+    const timer = setInterval(() => {
+      if (recovered && isAlive(recovered.pgid)) return;
+      clearInterval(timer);
+      removeRecord(recovered?.files);
+      recovered = null;
+      release();
+    }, deps.recoveryPollMs ?? 5_000);
+    timer.unref();
+  })();
 
   function prune(): void {
     const finished = [...jobs.values()]
@@ -191,10 +281,12 @@ export function createUpgrades(
       args.push(`--countdown=${Math.min(MAX_COUNTDOWN_SECONDS, Math.max(0, Math.floor(request.countdownSeconds)))}`);
     }
 
+    let handleFiles: readonly string[] = [];
     const finish = (state: "done" | "failed", error: string | null): void => {
       job.state = state;
       job.error = error;
       job.finishedAt = now();
+      removeRecord(handleFiles);
       release();
       prune();
     };
@@ -210,6 +302,17 @@ export function createUpgrades(
           else if (job.events.length < UPGRADE_MAX_EVENTS) job.events.push(parsed.event);
         },
       });
+      handleFiles = handle.outputFiles ?? [];
+      if (handle.pid !== undefined) {
+        writeRecord({
+          pgid: handle.pid,
+          jobId,
+          kind,
+          mcVersion: job.mcVersion,
+          startedAt: job.startedAt,
+          files: [...handleFiles],
+        });
+      }
       void handle.done.then(
         ({ exitCode }) => {
           if (exitCode === 0) return finish("done", null);
@@ -274,12 +377,13 @@ export function createUpgrades(
     if (events.length === 0 && !result) return null;
     const fresh = events.filter((e) => e.seq > since);
     // No result and nothing holds the slot: the script died or was killed.
+    // A job recovered after a restart holds the slot until it ends (W-009).
     const interrupted = !result && slot.current() === null;
     return {
-      jobId: "recovered",
-      kind: "upgrade",
+      jobId: recovered?.jobId ?? "recovered",
+      kind: recovered?.kind ?? "upgrade",
       state: result ? (result.ok ? "done" : "failed") : interrupted ? "failed" : "running",
-      mcVersion: "",
+      mcVersion: recovered?.mcVersion ?? "",
       events: fresh,
       next: fresh.length > 0 ? fresh[fresh.length - 1]!.seq : since,
       ...(result ? { result } : {}),
