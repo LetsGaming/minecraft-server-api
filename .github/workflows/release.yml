@@ -72,6 +72,10 @@ jobs:
           branch="api-server-release-v$VERSION"
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${SETUP_REPO}.git" setup
           cd setup
+          if [ ! -f api-server-release.json ]; then
+            echo "::notice::$SETUP_REPO has no api-server-release.json on main yet; pin $VERSION ($SHA256) by hand."
+            exit 0
+          fi
           git checkout -b "$branch"
           node -e '
             const fs = require("fs");
