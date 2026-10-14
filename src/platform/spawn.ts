@@ -19,6 +19,7 @@
 import { spawn } from "child_process";
 import { randomBytes } from "crypto";
 import fs from "fs";
+import os from "os";
 import path from "path";
 
 import { REPO_ROOT } from "./paths.js";
@@ -270,9 +271,53 @@ export interface JobSpawnHandle {
   outputFiles?: string[];
 }
 
-/** Where job output files and job records live: wrapper-owned, outside any server directory. */
+/**
+ * Where job output files and job records live: wrapper-owned, outside any
+ * server directory. `MC_STATE_DIR` wins; otherwise `./state`, unless the
+ * wrapper cannot write there (a read-only install), in which case a private
+ * per-user directory under the system temp dir. That fallback is shared
+ * with every other user, so it is used only when it is a real directory we
+ * own and nobody else can reach.
+ */
 export function jobStateDir(): string {
-  return path.join(process.env.MC_STATE_DIR || path.join(REPO_ROOT, "state"), "jobs");
+  if (process.env.MC_STATE_DIR) return path.join(process.env.MC_STATE_DIR, "jobs");
+  const local = path.join(REPO_ROOT, "state");
+  if (canCreateIn(local)) return path.join(local, "jobs");
+  return path.join(privateTempDir(), "jobs");
+}
+
+/** Can we write `dir`, or create it in its nearest existing parent? */
+function canCreateIn(dir: string): boolean {
+  let probe = dir;
+  for (;;) {
+    try {
+      fs.accessSync(probe, fs.constants.W_OK);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return false;
+    }
+    const parent = path.dirname(probe);
+    if (parent === probe) return false;
+    probe = parent;
+  }
+}
+
+/** `<tmpdir>/mc-api-server-<uid>`, created 0700, refused unless it is ours alone. */
+export function privateTempDir(): string {
+  const uid = process.getuid?.() ?? 0;
+  const dir = path.join(os.tmpdir(), `mc-api-server-${uid}`);
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
+  const st = fs.lstatSync(dir);
+  if (!st.isDirectory() || st.uid !== uid || (st.mode & 0o077) !== 0) {
+    throw new Error(
+      `${dir} is not a private directory owned by this user; set MC_STATE_DIR to a directory the wrapper owns`,
+    );
+  }
+  return dir;
 }
 
 /** How often a running job's output file is read for new lines. */

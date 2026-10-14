@@ -113,7 +113,7 @@ The file is looked up at `./api-server-config.json` next to `index.js`, or where
 | `MC_PORT` | both modes | Overrides the HTTP listen port |
 | `RCON_PASSWORD_<ID>` | both modes | Per-instance RCON password override, e.g. `RCON_PASSWORD_SURVIVAL` |
 | `MC_BIND_HOST` | both modes | Listen address (default `0.0.0.0`). Use `127.0.0.1` when the bot runs on the same host |
-| `MC_STATE_DIR` | both modes | Where running jobs keep their output files and records (default `./state`). Must be writable by the wrapper's user and should not be inside a server directory |
+| `MC_STATE_DIR` | both modes | Where running jobs keep their output files and records (default `./state`; if the wrapper cannot write there, a private `mc-api-server-<uid>` directory under the system temp dir). Must be writable by the wrapper's user and should not be inside a server directory |
 | `MC_BASH_PATH` / `MC_NODE_PATH` | both modes | Absolute paths of `bash` and `node` for the scripts the wrapper runs through `sudo`. Unset means a `PATH` lookup. Must match the paths in your sudoers rules; see [`docs/sudoers-setup.md`](./docs/sudoers-setup.md) |
 | `MC_TRUST_PROXY` | both modes | `true` = trust `X-Forwarded-For` for client IPs — **only behind a proxy that sets it**; see [Security](#security) |
 | `MC_SSE_MAX_CLIENTS` | both modes | Max concurrent `/logs/stream` clients per instance (default `50`) |
