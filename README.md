@@ -22,7 +22,7 @@ Intended as the remote backend for [minecraft-bot](https://github.com/LetsGaming
 From a [release](https://github.com/LetsGaming/minecraft-server-api/releases) (already built; check the tarball against its `.sha256`):
 
 ```bash
-v=4.1.0
+v=4.2.0
 curl -fsSLO "https://github.com/LetsGaming/minecraft-server-api/releases/download/v$v/mc-api-server-$v.tar.gz"
 tar -xzf "mc-api-server-$v.tar.gz" && cd "mc-api-server-$v"
 npm ci --omit=dev
