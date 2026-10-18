@@ -80,7 +80,9 @@ export function createCommands(cfg: InstanceConfig, rcon: RconClient | null) {
         { timeout: 15_000 },
         (err) => {
           if (err) {
-            log.warn(cfg.id, `screen send failed: ${err.message}`);
+            // err.message embeds the whole command line, and so the command.
+            const code = (err as NodeJS.ErrnoException).code;
+            log.warn(cfg.id, `screen send failed${code !== undefined ? ` (${String(code)})` : ""}`);
             reject(new CommandDeliveryError("screen send failed", rconError));
             return;
           }

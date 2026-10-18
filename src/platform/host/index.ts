@@ -24,7 +24,9 @@
  * process, no locale-dependent output to parse, and it is the same source
  * those tools read.
  */
+import fsp from "fs/promises";
 import os from "os";
+import path from "path";
 
 import {
   CPU_SAMPLE_MS,
@@ -36,6 +38,7 @@ import {
   sleep,
 } from "./cpu.js";
 import { getDiskUsage, monitoredPaths } from "./disk.js";
+import { isJavaRow, parsePsRows, pickServerProcess, screenAnchors, type PsRow } from "./processMatch.js";
 import { cached } from "../cache.js";
 import { execSafe } from "../exec.js";
 import type {
@@ -92,53 +95,92 @@ export async function getHostUsage(): Promise<HostUsage | null> {
 }
 
 /**
- * The instance's Java process: still identified as the biggest java process
- * owned by linuxUser (`ps` reads other users' processes without sudo), but
- * its CPU share is sampled rather than taken from `ps`.
+ * Which of the user's processes is this instance's server. Several instances
+ * may share a Linux user, so with `serverPath` the process is matched to the
+ * instance: by its working directory where /proc lets us read it, otherwise by
+ * sitting below the instance's screen session or systemd main process. A user
+ * process that cannot be tied to the instance is not reported. Without
+ * `serverPath` the biggest java process of the user is taken. CPU is sampled
+ * from /proc rather than taken from `ps`.
  */
+export interface ServerProcessOptions {
+  /** False for a liveness check, which does not need the 250 ms CPU sample. */
+  sampleCpu?: boolean;
+  /** The instance's server directory and id: match its own process instead of the user's biggest. */
+  serverPath?: string;
+  instanceId?: string;
+  /** The working directory of a pid, or null where it cannot be read. Defaults to /proc/<pid>/cwd. */
+  readCwd?: (pid: number) => Promise<string | null>;
+}
+
+async function readProcCwd(pid: number): Promise<string | null> {
+  try {
+    return (await fsp.readlink(`/proc/${pid}/cwd`)).replace(/ \(deleted\)$/, "");
+  } catch {
+    return null;
+  }
+}
+
+async function sameDirectory(a: string, b: string): Promise<boolean> {
+  const real = async (p: string): Promise<string> => fsp.realpath(p).catch(() => path.resolve(p));
+  return (await real(a)) === (await real(b));
+}
+
+/** The unit's main pid from systemd; null when there is no unit, no sudo grant or no systemd. */
+async function unitMainPid(instanceId: string): Promise<number | null> {
+  const { stdout, ok } = await execSafe(
+    "sudo",
+    ["-n", "systemctl", "show", `${instanceId}.service`, "-p", "MainPID", "--value"],
+    5_000,
+  );
+  const pid = ok ? parseInt(stdout.trim(), 10) : NaN;
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
 export async function getServerProcessUsage(
   linuxUser: string,
-  /** False for a liveness check, which does not need the 250 ms CPU sample. */
-  { sampleCpu = true }: { sampleCpu?: boolean } = {},
+  { sampleCpu = true, serverPath, instanceId, readCwd = readProcCwd }: ServerProcessOptions = {},
 ): Promise<ProcessUsage | null> {
-  const { stdout, ok } = await execSafe("ps", [
-    "-u",
-    linuxUser,
-    "-o",
-    "pid=,rss=,comm=",
-  ]);
+  const { stdout, ok } = await execSafe("ps", ["-u", linuxUser, "-o", "pid=,ppid=,rss=,args="]);
   if (!ok) return null;
 
-  let pid: number | null = null;
-  let rssBytes = 0;
-  for (const line of stdout.split("\n")) {
-    const parts = line.trim().split(/\s+/);
-    if (parts.length < 3) continue;
-    const comm = parts.slice(2).join(" ");
-    if (!comm.toLowerCase().includes("java")) continue;
-    const candidatePid = Number(parts[0]);
-    const candidateRss = Number(parts[1]) * 1024;
-    if (!Number.isFinite(candidatePid) || !Number.isFinite(candidateRss)) {
-      continue;
+  const rows = parsePsRows(stdout);
+  const javas = rows.filter(isJavaRow);
+  let chosen: PsRow | null = null;
+
+  if (serverPath === undefined) {
+    for (const row of javas) if (chosen === null || row.rssKb > chosen.rssKb) chosen = row;
+  } else {
+    const byCwd: PsRow[] = [];
+    const unresolved: PsRow[] = [];
+    for (const row of javas) {
+      const cwd = await readCwd(row.pid);
+      if (cwd === null) unresolved.push(row);
+      else if (await sameDirectory(cwd, serverPath)) byCwd.push(row);
     }
-    if (pid === null || candidateRss > rssBytes) {
-      pid = candidatePid;
-      rssBytes = candidateRss;
+    let anchors: number[] = [];
+    if (byCwd.length === 0 && unresolved.length > 0 && instanceId !== undefined) {
+      anchors = screenAnchors(rows, instanceId);
+      if (anchors.length === 0) {
+        const main = await unitMainPid(instanceId);
+        if (main !== null) anchors = [main];
+      }
     }
+    chosen = pickServerProcess(rows, byCwd, unresolved, anchors);
   }
-  if (pid === null) return null;
+  if (chosen === null) return null;
 
   // A process that exits mid-sample yields null; 0% is the honest reading
   // for "it is no longer using any CPU".
-  const cpuPercent = sampleCpu ? ((await sampleProcessCpu(pid)) ?? 0) : 0;
-  return { pid, rssBytes, cpuPercent };
+  const cpuPercent = sampleCpu ? ((await sampleProcessCpu(chosen.pid)) ?? 0) : 0;
+  return { pid: chosen.pid, rssBytes: chosen.rssKb * 1024, cpuPercent };
 }
 
 export async function getHostInfo(cfg: InstanceConfig): Promise<HostInfo> {
   // Both CPU samplers sleep for the window, so running them together costs
   // one window rather than two.
   const [proc, host, ...disks] = await Promise.all([
-    getServerProcessUsage(cfg.linuxUser),
+    getServerProcessUsage(cfg.linuxUser, { serverPath: cfg.serverPath, instanceId: cfg.id }),
     getHostUsage(),
     ...monitoredPaths(cfg).map((p) => cachedDiskUsage(p).get().then((e) => e.value)),
   ]);

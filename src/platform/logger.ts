@@ -121,10 +121,10 @@ async function drain(dir: string): Promise<void> {
     const batch = queue.join("");
     queue = [];
     try {
-      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
       const file = path.join(dir, "api-server.log");
       await rotateIfLarge(file);
-      await fs.promises.appendFile(file, batch);
+      await fs.promises.appendFile(file, batch, { mode: 0o600 });
       knownSize = (knownSize ?? 0) + Buffer.byteLength(batch);
     } catch (err) {
       fileFailed = true;
@@ -156,7 +156,7 @@ process.on("exit", () => {
   const dir = logDir();
   if (!dir || fileFailed || queue.length === 0) return;
   try {
-    fs.appendFileSync(path.join(dir, "api-server.log"), queue.join(""));
+    fs.appendFileSync(path.join(dir, "api-server.log"), queue.join(""), { mode: 0o600 });
   } catch {
     /* nothing left to report it to */
   }

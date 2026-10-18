@@ -131,15 +131,15 @@ describe("parsePidCpuJiffies", () => {
 });
 
 describe("getServerProcessUsage (ps parsing)", () => {
-  it("picks the biggest java process of the user", async () => {
-    // ps no longer supplies pcpu — CPU is sampled from /proc, which is
+  it("picks the biggest java process of the user when no instance is named", async () => {
+    // ps no longer supplies pcpu, CPU is sampled from /proc, which is
     // absent for these fake pids, so it degrades to 0.
     mockExec.mockResolvedValueOnce({
       ok: true,
       stdout:
-        "  101  50000 bash\n" +
-        "  202 4194304 java\n" +
-        "  303 1048576 java\n",
+        "  101 1  50000 bash\n" +
+        "  202 1 4194304 /usr/bin/java -jar server.jar\n" +
+        "  303 1 1048576 java -jar other.jar\n",
     });
     expect(await getServerProcessUsage("minecraft")).toEqual({
       pid: 202,
@@ -149,7 +149,7 @@ describe("getServerProcessUsage (ps parsing)", () => {
   });
 
   it("returns null when no java process exists", async () => {
-    mockExec.mockResolvedValueOnce({ ok: true, stdout: "  1 1000 bash\n" });
+    mockExec.mockResolvedValueOnce({ ok: true, stdout: "  1 0 1000 bash\n" });
     expect(await getServerProcessUsage("minecraft")).toBeNull();
   });
 
@@ -183,5 +183,51 @@ describe("monitoredPaths", () => {
     expect(
       monitoredPaths({ ...base, backupsPath: "/opt/mc/survival/." }),
     ).toEqual([path.resolve("/opt/mc/survival")]);
+  });
+});
+
+describe("getServerProcessUsage with two instances under one user", () => {
+  const PS =
+    "  50 1 2000 SCREEN -dmS smp bash start.sh\n" +
+    "  51 50 3000 bash start.sh\n" +
+    "  52 51 4194304 /usr/bin/java -Xmx4G -jar server.jar nogui\n" +
+    "  60 1 2000 SCREEN -dmS creative bash start.sh\n";
+  const options = (instanceId: string, serverPath: string) => ({ sampleCpu: false, instanceId, serverPath });
+
+  it("does not report another instance's java for a stopped one (cwd readable)", async () => {
+    mockExec.mockResolvedValue({ ok: true, stdout: PS });
+    const readCwd = async () => path.resolve("/srv/smp");
+    expect(await getServerProcessUsage("mc", { ...options("creative", "/srv/creative"), readCwd })).toBeNull();
+    expect(await getServerProcessUsage("mc", { ...options("smp", "/srv/smp"), readCwd })).toMatchObject({ pid: 52 });
+  });
+
+  it("falls back to the screen session of the instance when cwd cannot be read", async () => {
+    mockExec.mockResolvedValue({ ok: true, stdout: PS });
+    const readCwd = async () => null;
+    expect(await getServerProcessUsage("mc", { ...options("smp", "/srv/smp"), readCwd })).toMatchObject({
+      pid: 52,
+      rssBytes: 4194304 * 1024,
+    });
+    expect(await getServerProcessUsage("mc", { ...options("creative", "/srv/creative"), readCwd })).toBeNull();
+  });
+
+  it("falls back to the unit's main pid when there is no screen session", async () => {
+    mockExec.mockImplementation((cmd: string) =>
+      Promise.resolve(
+        cmd === "ps"
+          ? { ok: true, stdout: "  70 1 1000 bash run.sh\n  71 70 999999 java -jar server.jar\n" }
+          : { ok: true, stdout: "70\n" },
+      ),
+    );
+    const readCwd = async () => null;
+    expect(await getServerProcessUsage("mc", { ...options("smp", "/srv/smp"), readCwd })).toMatchObject({ pid: 71 });
+  });
+
+  it("reports nothing when a java process cannot be tied to the instance", async () => {
+    mockExec.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "ps" ? { ok: true, stdout: "  71 1 999999 java -jar server.jar\n" } : { ok: false, stdout: "" }),
+    );
+    const readCwd = async () => null;
+    expect(await getServerProcessUsage("mc", { ...options("smp", "/srv/smp"), readCwd })).toBeNull();
   });
 });

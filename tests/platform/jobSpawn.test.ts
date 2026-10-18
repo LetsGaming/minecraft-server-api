@@ -67,4 +67,25 @@ describe.skipIf(!sudoWorks())("spawnJobAsInstanceUser (W-009)", () => {
     await handle.done;
     expect(processGroupAlive(handle.pid!)).toBe(false);
   });
+
+  it("stops a job that outlives its timeout and reports it", async () => {
+    const handle = spawnJobAsInstanceUser(
+      { linuxUser: user, scriptsDir: os.tmpdir() },
+      ["bash", "-c", "sleep 30"],
+      { timeoutMs: 300, label: "Test job", onLine: () => {} },
+    );
+    await expect(handle.done).rejects.toThrow(/timed out/);
+    expect(processGroupAlive(handle.pid!)).toBe(false);
+  });
+
+  it("drops a line past the length cap without stalling the lines after it", async () => {
+    const lines: string[] = [];
+    const handle = spawnJobAsInstanceUser(
+      { linuxUser: user, scriptsDir: os.tmpdir() },
+      ["bash", "-c", 'head -c 3000000 /dev/zero | tr "\\0" x; echo; echo after'],
+      { timeoutMs: 20_000, label: "Test job", onLine: (l) => lines.push(l) },
+    );
+    await handle.done;
+    expect(lines).toEqual(["after"]);
+  });
 });

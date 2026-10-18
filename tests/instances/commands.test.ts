@@ -4,6 +4,7 @@ const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("child_process", () => ({ execFile: execFileMock }));
 
 import { createCommands, CommandDeliveryError } from "../../src/instances/commands.js";
+import { log } from "../../src/platform/logger.js";
 import { RconNoReplyError, type RconClient } from "../../src/platform/rcon/client.js";
 import type { InstanceConfig } from "../../src/config/types.js";
 
@@ -21,6 +22,21 @@ function rconReturning(result: string | Error): RconClient {
 beforeEach(() => {
   execFileMock.mockReset();
   execFileMock.mockImplementation((_bin, _args, _opts, cb) => cb(null));
+});
+
+describe("screen failure logging", () => {
+  it("logs a code and a fixed phrase, never the command line", async () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    execFileMock.mockImplementation((_bin, _args, _opts, cb) => {
+      cb(Object.assign(new Error("Command failed: sudo -n -u minecraft screen -S survival -X stuff /auth hunter2"), { code: 1 }));
+    });
+    await expect(createCommands(cfg, null).sendCommand("auth hunter2")).rejects.toBeInstanceOf(CommandDeliveryError);
+    const logged = warn.mock.calls.map((c) => c.join(" ")).join(" | ");
+    expect(logged).toContain("screen send failed (1)");
+    expect(logged).not.toContain("hunter2");
+    expect(logged).not.toContain("sudo");
+    warn.mockRestore();
+  });
 });
 
 describe("sendCommand", () => {

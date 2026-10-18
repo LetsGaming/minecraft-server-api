@@ -325,7 +325,7 @@ export interface UpgradeEvent {
   /** Epoch seconds. */
   ts: number;
   phase: string;
-  status: string;
+  status: "running" | "done" | "error" | "info";
   msg: string;
 }
 

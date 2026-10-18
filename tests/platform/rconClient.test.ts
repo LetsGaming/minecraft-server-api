@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import net from "net";
 
 import { RconClient } from "../../src/platform/rcon/client.js";
-import { decodePkt, encodePkt } from "../../src/platform/rcon/packet.js";
+import { decodePkt, encodePkt, type RconPacket } from "../../src/platform/rcon/packet.js";
 
-type Mode = "drop" | "ok" | "silent" | "long" | "garbage" | "mute" | "hangup";
+type Mode = "drop" | "ok" | "silent" | "long" | "garbage" | "mute" | "hangup" | "multi" | "badauth";
 
 let mode: Mode;
 let server: net.Server;
@@ -30,12 +30,29 @@ beforeEach(async () => {
       sock.destroy();
       return;
     }
-    sock.on("data", (buf) => {
+    sock.on("data", (chunk) => {
       if (mode === "silent") return;
-      const pkt = decodePkt(buf);
-      if (!pkt) return;
-      if (pkt.type === 3) sock.write(encodePkt(1, 2, ""));
+      let rest = chunk;
+      for (let pkt = decodePkt(rest); pkt; pkt = decodePkt(rest)) {
+        rest = rest.subarray(pkt.totalSize);
+        handle(pkt);
+      }
+    });
+    const handle = (pkt: RconPacket): void => {
+      if (pkt.type === 3) sock.write(encodePkt(mode === "badauth" ? -1 : 1, 2, ""));
       else if (pkt.type === 2) {
+        if (mode === "multi") {
+          if (pkt.body === "") {
+            sock.write(encodePkt(pkt.id, 0, ""));
+            return;
+          }
+          sock.write(Buffer.concat([
+            encodePkt(pkt.id, 0, "a".repeat(4096)),
+            encodePkt(pkt.id, 0, "b".repeat(4096)),
+            encodePkt(pkt.id, 0, "c".repeat(100)),
+          ]));
+          return;
+        }
         if (mode === "mute") return;
         if (mode === "hangup") {
           sock.destroy();
@@ -50,7 +67,7 @@ beforeEach(async () => {
         const body = mode === "long" ? "y".repeat(4096) : `echo:${pkt.body}`;
         sock.write(encodePkt(pkt.id, 0, body));
       }
-    });
+    };
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   port = (server.address() as net.AddressInfo).port;
@@ -126,6 +143,63 @@ describe("RconClient framing (W-003)", () => {
     });
     await settle();
     await vi.advanceTimersByTimeAsync(5_000);
+    await assertion;
+  });
+});
+
+describe("RconClient multi-packet replies", () => {
+  it("joins the packets of a reply longer than one packet", async () => {
+    mode = "multi";
+    const client = new RconClient("127.0.0.1", port, "pw");
+    const reply = await client.send("big");
+    expect(reply).toBe("a".repeat(4096) + "b".repeat(4096) + "c".repeat(100));
+    mode = "ok";
+    expect(await client.send("list")).toBe("echo:list");
+  });
+
+  it("ends a reply of exactly one full packet when the empty follow-up is answered", async () => {
+    mode = "long";
+    const client = new RconClient("127.0.0.1", port, "pw");
+    expect(await client.send("big")).toHaveLength(4096);
+  });
+
+  it("does not wait for a follow-up after a short reply", async () => {
+    mode = "ok";
+    const client = new RconClient("127.0.0.1", port, "pw");
+    expect(await client.send("list")).toBe("echo:list");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("RconClient authentication failure", () => {
+  it("rejects with the auth error, not a generic loss", async () => {
+    mode = "badauth";
+    const client = new RconClient("127.0.0.1", port, "wrong");
+    await expect(client.connect()).rejects.toThrow("RCON auth failed");
+    mode = "badauth";
+    await vi.advanceTimersByTimeAsync(2_500);
+    await expect(client.send("list")).rejects.toThrow("RCON auth failed");
+  });
+
+  it("gives concurrent callers the auth error too", async () => {
+    mode = "badauth";
+    const client = new RconClient("127.0.0.1", port, "wrong");
+    const results = await Promise.allSettled([client.connect(), client.connect(), client.connect()]);
+    for (const r of results) {
+      expect(r.status).toBe("rejected");
+      expect((r as PromiseRejectedResult).reason).toMatchObject({ message: "RCON auth failed" });
+    }
+  });
+});
+
+describe("RconClient connect bound", () => {
+  it("gives up on a connect that outlasts the command timeout", async () => {
+    mode = "silent";
+    const client = new RconClient("127.0.0.1", port, "pw");
+    const attempt = client.send("list", 1_000);
+    const assertion = expect(attempt).rejects.toThrow("RCON connect timeout");
+    await settle();
+    await vi.advanceTimersByTimeAsync(1_000);
     await assertion;
   });
 });

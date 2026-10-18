@@ -172,7 +172,15 @@ export async function probeProcess(
   }
   // No sudo needed: ps reads other users' processes. Also covers the window
   // during startup where the JVM is up but has not bound RCON yet.
-  if (await getServerProcessUsage(cfg.linuxUser, { sampleCpu: false })) return "process";
+  if (
+    await getServerProcessUsage(cfg.linuxUser, {
+      sampleCpu: false,
+      serverPath: cfg.serverPath,
+      instanceId: cfg.id,
+    })
+  ) {
+    return "process";
+  }
   if (await screenSessionExists(cfg)) return "screen";
   return "none";
 }
