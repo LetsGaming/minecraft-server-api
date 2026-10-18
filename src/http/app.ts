@@ -6,7 +6,7 @@
  * This file is wiring only. Auth lives in auth.ts, route groups under
  * routes/, and every decision behind them in instances/.
  */
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 
 import { registerAuth } from "./auth.js";
@@ -39,7 +39,7 @@ export interface BuildOptions {
    * an attacker rotate limiter buckets at will. Wired from
    * MC_TRUST_PROXY in index.ts.
    */
-  trustProxy?: boolean;
+  trustProxy?: boolean | string[];
 }
 
 export interface BuiltApp {
@@ -60,6 +60,20 @@ const BODY_LIMIT_BYTES = 4096;
 // the bot as "wrapper unreachable" rather than "rate limited". Writes get
 // their own, tighter budget below (WriteRateLimiter).
 const GLOBAL_RATE_LIMIT_MAX = 100;
+
+/**
+ * A client has this long to deliver a whole request. The largest body is a
+ * few hundred kilobytes, so only a stalled or deliberately slow sender runs
+ * into it.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * A socket silent for this long is dropped. Log streams send a heartbeat
+ * every 20 s and downloads write continuously, so a live connection never
+ * gets near it.
+ */
+const CONNECTION_TIMEOUT_MS = 120_000;
 const GLOBAL_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 
 /**
@@ -90,6 +104,8 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
     // app.close() would wait on them forever and SIGTERM would hang
     // until systemd/PM2 escalates to SIGKILL.
     forceCloseConnections: true,
+    requestTimeout: REQUEST_TIMEOUT_MS,
+    connectionTimeout: CONNECTION_TIMEOUT_MS,
   });
 
   // ── Route census ────────────────────────────────────────────────────
@@ -214,6 +230,20 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
   registerInstanceRoutes(app, opsRegistry, logStreamAPI);
 
   registerManifestRoute(app, routes);
+
+  // Framework errors (413, malformed JSON, 415, schema validation) use the
+  // same `{ error }` shape as every route. Anything else is a fault: logged
+  // here, never described to the client.
+  app.setErrorHandler((err: FastifyError & { error?: unknown }, req, reply) => {
+    const status = err.statusCode;
+    if (typeof status === "number" && status >= 400 && status < 500) {
+      const message = typeof err.error === "string" ? err.error : err.message;
+      void reply.status(status).send({ error: message });
+      return;
+    }
+    log.error("http", `${req.method} ${req.routeOptions.url ?? UNMATCHED_ROUTE}: ${err.message}`);
+    void reply.status(500).send({ error: "Internal server error" });
+  });
 
   // Historical `{ error }` body shape on unknown routes.
   app.setNotFoundHandler((_req, reply) => {

@@ -67,6 +67,8 @@ function normalisePort(id: string, raw: unknown): number {
 }
 
 export const MIN_API_KEY_LENGTH = 32;
+/** Distinct characters a key needs; "aaaa...a" at any length is not a key. */
+export const MIN_API_KEY_DISTINCT_CHARS = 8;
 const LINUX_USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 /**
  * The instance id names the screen session, the RCON_PASSWORD_<ID> variable
@@ -85,6 +87,16 @@ export function validateConfig(config: AppConfig): string[] {
   if (config.API_KEY && config.API_KEY.length < MIN_API_KEY_LENGTH) {
     problems.push(
       `The API key is ${config.API_KEY.length} characters; at least ${MIN_API_KEY_LENGTH} are required. ` +
+        `Generate one with: openssl rand -hex 32`,
+    );
+  } else if (config.API_KEY && config.API_KEY.trim() !== config.API_KEY) {
+    problems.push(
+      "The API key starts or ends with whitespace, which HTTP clients strip from the header, so it could never match. " +
+        "Generate one with: openssl rand -hex 32",
+    );
+  } else if (config.API_KEY && new Set(config.API_KEY).size < MIN_API_KEY_DISTINCT_CHARS) {
+    problems.push(
+      `The API key uses fewer than ${MIN_API_KEY_DISTINCT_CHARS} distinct characters. ` +
         `Generate one with: openssl rand -hex 32`,
     );
   }
