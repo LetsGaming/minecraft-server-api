@@ -24,7 +24,7 @@ import fsp from "fs/promises";
 import path from "path";
 
 import type { InstanceConfig } from "../config/types.js";
-import { isInside, openNoFollow } from "../platform/safeFs.js";
+import { FileTooLargeError, isInside, readFileNoFollow } from "../platform/safeFs.js";
 import {
   changedProtectedKeys,
   redactSecrets,
@@ -123,14 +123,13 @@ export interface ConfigFileInfo {
   mtimeMs: number;
 }
 
-/** Read a config file without following a final symlink (W-007, see safeFs.ts). */
+/**
+ * Read a config file without following a final symlink (W-007, see
+ * safeFs.ts). The cap leaves room for a BOM; a file grown past
+ * {@link MAX_CONFIG_BYTES} since it was indexed throws FileTooLargeError.
+ */
 async function readNoFollow(absPath: string): Promise<string> {
-  const fh = await openNoFollow(absPath);
-  try {
-    return await fh.readFile("utf-8");
-  } finally {
-    await fh.close();
-  }
+  return (await readFileNoFollow(absPath, MAX_CONFIG_BYTES + 3)).toString("utf-8");
 }
 
 /**
@@ -433,10 +432,17 @@ export function createConfigFiles(cfg: InstanceConfig) {
     const found = await resolve(id);
     if (!found) return null;
     if (found.info.tooLarge) return { tooLarge: true as const, info: found.info };
-    const { text } = stripBom(await readNoFollow(found.absPath));
+    let raw: string;
+    try {
+      raw = await readNoFollow(found.absPath);
+    } catch (err) {
+      if (err instanceof FileTooLargeError) return { tooLarge: true as const, info: found.info };
+      throw err;
+    }
+    const { text } = stripBom(raw);
     // The etag is over the real contents; the client sees secrets redacted
     // (W-006) and gets them restored when it writes the text back.
-    return { text: redactSecrets(text), etag: etagOf(text), info: found.info };
+    return { text: redactSecrets(text, found.info.format), etag: etagOf(text), info: found.info };
   }
 
   function snapshotDir(id: string): string {
@@ -450,7 +456,7 @@ export function createConfigFiles(cfg: InstanceConfig) {
    */
   async function ensureRealDir(dir: string): Promise<void> {
     try {
-      await fsp.mkdir(dir);
+      await fsp.mkdir(dir, { mode: 0o700 });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
@@ -474,7 +480,11 @@ export function createConfigFiles(cfg: InstanceConfig) {
     let stamp = base;
     for (let i = 1; ; i++) {
       try {
-        await fsp.writeFile(path.join(dir, stamp), text, { encoding: "utf-8", flag: "wx" });
+        await fsp.writeFile(path.join(dir, stamp), text, {
+          encoding: "utf-8",
+          flag: "wx",
+          mode: 0o600,
+        });
         break;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "EEXIST" || i > 50) throw err;
@@ -532,12 +542,18 @@ export function createConfigFiles(cfg: InstanceConfig) {
       if (!found) return { ok: false as const, reason: "not-found" as const };
       if (found.info.tooLarge) return { ok: false as const, reason: "too-large" as const };
 
-      const raw = await readNoFollow(found.absPath);
+      let raw: string;
+      try {
+        raw = await readNoFollow(found.absPath);
+      } catch (err) {
+        if (err instanceof FileTooLargeError) return { ok: false as const, reason: "too-large" as const };
+        throw err;
+      }
       const current = stripBom(raw);
       if (etagOf(current.text) !== ifMatch) {
         return { ok: false as const, reason: "conflict" as const };
       }
-      const text = restoreSecrets(submitted, current.text);
+      const text = restoreSecrets(submitted, current.text, found.info.format);
       if (text === null) return { ok: false as const, reason: "redacted" as const };
       const keys = blockedKeys(found.info.relPath, current.text, text, allowProtected);
       if (keys.length > 0) return { ok: false as const, reason: "protected" as const, keys };
@@ -564,7 +580,10 @@ export function createConfigFiles(cfg: InstanceConfig) {
     { allowProtected = false }: WriteOptions = {},
   ): Promise<
     | { ok: true; etag: string }
-    | { ok: false; reason: "bad-snapshot" | "not-found" | "no-such-snapshot" | "conflict" }
+    | {
+        ok: false;
+        reason: "bad-snapshot" | "not-found" | "no-such-snapshot" | "conflict" | "too-large";
+      }
     | { ok: false; reason: "protected"; keys: string[] }
   > {
     // The stamp comes from a client, so it is validated rather than trusted.
@@ -581,7 +600,13 @@ export function createConfigFiles(cfg: InstanceConfig) {
         return { ok: false as const, reason: "no-such-snapshot" as const };
       }
 
-      const raw = await readNoFollow(found.absPath);
+      let raw: string;
+      try {
+        raw = await readNoFollow(found.absPath);
+      } catch (err) {
+        if (err instanceof FileTooLargeError) return { ok: false as const, reason: "too-large" as const };
+        throw err;
+      }
       const current = stripBom(raw).text;
       // W-011: a revert replaces the whole file, so it needs the same proof
       // as a write that the caller saw the version it is replacing.

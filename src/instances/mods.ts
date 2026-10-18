@@ -20,6 +20,7 @@
  * reported a handled failure (`ok:false`) is returned to the route as data;
  * only a script that could not run, or produced no parseable result, throws.
  */
+import type { Stats } from "fs";
 import fsp from "fs/promises";
 import path from "path";
 
@@ -27,6 +28,7 @@ import { cached } from "../platform/cache.js";
 import { createMutex, mapLimit } from "../platform/concurrency.js";
 import { createOperationSlot, type OperationSlot } from "./operationSlot.js";
 import { interpreter, runAsInstanceUser } from "../platform/spawn.js";
+import { FileTooLargeError, openNoFollow } from "../platform/safeFs.js";
 import {
   COMPAT_MAX_RUNNING_GLOBAL,
   createCompatSlots,
@@ -37,6 +39,8 @@ const compatSlots = createCompatSlots(COMPAT_MAX_RUNNING_GLOBAL);
 
 /** Above the 4-thread libuv pool, low enough to leave it room for other work. */
 const EXISTS_CONCURRENCY = 8;
+/** The manifest lists slugs and filenames; megabytes means something else wrote it. */
+const MANIFEST_MAX_BYTES = 4 * 1024 * 1024;
 /** The manifest and disabled/ markers only change on a redeploy or a mutation. */
 const MODS_FRESH_MS = 60_000;
 const MODS_STALE_MS = 600_000;
@@ -122,8 +126,17 @@ export function createMods(cfg: InstanceConfig, slot: OperationSlot = createOper
     mtimeMs: number;
   } | null> {
     try {
-      const stat = await fsp.stat(manifestPath);
-      const raw = JSON.parse(await fsp.readFile(manifestPath, "utf-8")) as {
+      const fh = await openNoFollow(manifestPath);
+      let stat: Stats;
+      let text: string;
+      try {
+        stat = await fh.stat();
+        if (stat.size > MANIFEST_MAX_BYTES) throw new FileTooLargeError(stat.size);
+        text = await fh.readFile("utf-8");
+      } finally {
+        await fh.close();
+      }
+      const raw = JSON.parse(text) as {
         gameVersion?: unknown;
         modLoader?: unknown;
         mods?: Record<string, unknown>;

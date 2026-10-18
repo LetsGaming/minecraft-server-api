@@ -169,3 +169,42 @@ describe("write concurrency (W-011)", () => {
     expect(await files.revert(id, w.snapshot, etag)).toEqual({ ok: false, reason: "conflict" });
   });
 });
+
+describe("format-aware reads", () => {
+  it("redacts a whitespace-separated rcon password and refuses an override spelled that way", async () => {
+    put("server.properties", "rcon.password hunter2\nonline-mode=true\n");
+    const { files, id, text, etag } = await open("server.properties");
+    expect(text).not.toContain("hunter2");
+    const res = await files.write(id, `${text}online-mode false\n`, etag);
+    expect(res).toEqual({ ok: false, reason: "protected", keys: ["online-mode"] });
+    expect(disk("server.properties")).toBe("rcon.password hunter2\nonline-mode=true\n");
+  });
+
+  it("redacts nested secrets in minified JSON and restores them on write", async () => {
+    put("config/app.json", '{"db":{"password":"hunter2"},"n":1}');
+    const { files, id, text, etag } = await open("config/app.json");
+    expect(text).not.toContain("hunter2");
+    const res = await files.write(id, text.replace('"n":1', '"n":2'), etag);
+    expect(res.ok).toBe(true);
+    expect(disk("config/app.json")).toBe('{"db":{"password":"hunter2"},"n":2}');
+  });
+});
+
+describe("snapshots and size limits", () => {
+  it.skipIf(process.platform === "win32")("creates snapshots private to the wrapper user", async () => {
+    const { files, id, etag } = await open("config/mod.toml");
+    const w = await files.write(id, "[a]\n\tb = 2\n", etag);
+    if (!w.ok) throw new Error("write failed");
+    const root = path.join(serverPath, ".mcbot-config-snapshots");
+    expect(fs.statSync(root).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(path.join(root, id)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(path.join(root, id, w.snapshot)).mode & 0o777).toBe(0o600);
+  });
+
+  it("refuses to write over a file that grew past the limit after it was indexed", async () => {
+    const { files, id, etag } = await open("config/mod.toml");
+    put("config/mod.toml", "x".repeat(2 * 1024 * 1024));
+    const res = await files.write(id, "[a]\n", etag);
+    expect(res).toEqual({ ok: false, reason: "too-large" });
+  });
+});

@@ -8,11 +8,14 @@ import path from "path";
 import { cached } from "../platform/cache.js";
 import { log } from "../platform/logger.js";
 import { mapLimit } from "../platform/concurrency.js";
+import { isInside, readFileNoFollow } from "../platform/safeFs.js";
 import type { World } from "./world.js";
 import type { InstanceConfig } from "../config/types.js";
 
 /** Above the 4-thread libuv pool, low enough to leave it room for other work. */
 const STATS_READ_CONCURRENCY = 8;
+/** A stats file is a few kilobytes; megabytes means something else wrote it. */
+const MAX_STATS_BYTES = 2 * 1024 * 1024;
 /** Matches the bot's own loadAllStats() TTL, so the two never disagree. */
 const ALL_STATS_FRESH_MS = 30_000;
 const ALL_STATS_STALE_MS = 300_000;
@@ -44,11 +47,28 @@ export function createStats(cfg: InstanceConfig, world: World) {
  */
 async function resolveStatsDir(): Promise<string> {
   const levelName = await world.getLevelName();
-  if (_statsDir && _statsDir.levelName === levelName) return _statsDir.dir;
-
-  for (const rel of STATS_DIR_CANDIDATES) {
-    const dir = path.join(cfg.serverPath, levelName, rel);
+  if (_statsDir && _statsDir.levelName === levelName) {
+    // The instance user can swap the directory for a link after it was probed.
     try {
+      if ((await fsp.realpath(_statsDir.dir)) === _statsDir.dir) return _statsDir.dir;
+    } catch {
+      /* gone: probe again */
+    }
+    _statsDir = null;
+  }
+
+  let realServer: string | null = null;
+  try {
+    realServer = await fsp.realpath(cfg.serverPath);
+  } catch {
+    /* no server directory yet */
+  }
+  for (const rel of STATS_DIR_CANDIDATES) {
+    if (realServer === null) break;
+    let dir: string;
+    try {
+      dir = await fsp.realpath(path.join(cfg.serverPath, levelName, rel));
+      if (!isInside(dir, realServer)) continue;
       if (!(await fsp.stat(dir)).isDirectory()) continue;
     } catch {
       continue; // next candidate
@@ -72,7 +92,7 @@ async function getStats(uuid: string): Promise<unknown> {
   const rel = path.relative(statsDir, resolved);
   if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
   try {
-    return JSON.parse(await fsp.readFile(resolved, "utf-8")) as unknown;
+    return JSON.parse((await readFileNoFollow(resolved, MAX_STATS_BYTES)).toString("utf-8")) as unknown;
   } catch {
     return null;
   }
