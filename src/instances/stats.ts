@@ -45,7 +45,7 @@ export function createStats(cfg: InstanceConfig, world: World) {
  *
  * Resolution is cached per level name, so a world switch re-probes.
  */
-async function resolveStatsDir(): Promise<string> {
+async function resolveStatsDir(): Promise<string | null> {
   const levelName = await world.getLevelName();
   if (_statsDir && _statsDir.levelName === levelName) {
     // The instance user can swap the directory for a link after it was probed.
@@ -78,15 +78,16 @@ async function resolveStatsDir(): Promise<string> {
     return dir;
   }
 
-  // None exist yet — which is normal on a fresh world, since the server
-  // creates the directory when someone first plays. Return the vanilla
-  // path so messages name the expected location, and do not cache: the
-  // real one appears later and must be picked up without a restart.
-  return path.join(cfg.serverPath, levelName, STATS_DIR_CANDIDATES[0]!);
+  // None usable: normal on a fresh world, since the server creates the
+  // directory when someone first plays. A candidate that exists but leaves the
+  // server directory is treated the same way and never read. Not cached, so the
+  // real one is picked up without a restart.
+  return null;
 }
 
 async function getStats(uuid: string): Promise<unknown> {
   const statsDir = await resolveStatsDir();
+  if (statsDir === null) return null;
   // A-11: path.relative() guard — more robust than startsWith()
   const resolved = path.resolve(statsDir, `${uuid}.json`);
   const rel = path.relative(statsDir, resolved);
@@ -100,6 +101,7 @@ async function getStats(uuid: string): Promise<unknown> {
 
 async function listStatsUuids(): Promise<string[]> {
   const dir = await resolveStatsDir();
+  if (dir === null) return [];
   try {
     return (await fsp.readdir(dir))
       .filter((f) => f.endsWith(".json"))
@@ -136,6 +138,7 @@ async function listStatsUuids(): Promise<string[]> {
  */
 async function deleteStats(uuid: string): Promise<boolean> {
   const statsDir = await resolveStatsDir();
+  if (statsDir === null) return false;
   // A-11: same path.relative() traversal guard as getStats — the route
   // additionally enforces the UUID allowlist, this is defence in depth.
   const resolved = path.resolve(statsDir, `${uuid}.json`);
