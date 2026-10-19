@@ -1,11 +1,15 @@
-import { execSync, spawn, spawnSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
+import { pathToFileURL } from "url";
 
 /**
  * CONFIGURATION
  */
-const DEV_CHECK_DURATION = 10000;
+/** Longest a project's own build or test script may run during the smoke test. */
+const SMOKE_SCRIPT_TIMEOUT_MS = 10 * 60 * 1000;
+/** npm, pnpm and yarn are .cmd shims on Windows, which spawn only runs through a shell. */
+const USE_SHELL = process.platform === "win32";
 /** Pinned so this script runs a known npm-check-updates, not whatever is latest today. */
 const NCU_VERSION = "23.1.0";
 const IGNORE_DIRS = [
@@ -71,57 +75,66 @@ function findNpmProjects(dir, projects = []) {
 }
 
 /**
- * Audits the project and returns { direct, transitive } vulnerability counts.
+ * Counts vulnerabilities in the parsed output of `<manager> audit --json`.
  * "direct" = vulnerabilities in packages listed in package.json (fixable by you).
  * "transitive" = vulnerabilities only in sub-dependencies (not directly fixable).
  *
  * Only direct vulnerabilities should block an update; transitive ones are reported
  * as warnings since they require upstream fixes.
+ *
+ * Understands the npm 7+ shape (`vulnerabilities`, one entry per package with
+ * `isDirect`), the older `advisories` shape (npm 6, pnpm) and, as a last resort,
+ * the aggregate counts in `metadata`.
  */
+export function countVulnerabilities(auditData) {
+  if (auditData && typeof auditData.vulnerabilities === "object" && auditData.vulnerabilities !== null &&
+      !("low" in auditData.vulnerabilities)) {
+    let direct = 0;
+    let transitive = 0;
+    for (const entry of Object.values(auditData.vulnerabilities)) {
+      if (entry && entry.isDirect === true) direct++;
+      else transitive++;
+    }
+    return { direct, transitive };
+  }
+
+  if (auditData?.advisories) {
+    let direct = 0;
+    let transitive = 0;
+    for (const advisory of Object.values(auditData.advisories)) {
+      const isDirectlyReachable = advisory.findings?.some((f) =>
+        f.paths?.some((p) => !p.includes(">")),
+      );
+      if (isDirectlyReachable) direct++;
+      else transitive++;
+    }
+    return { direct, transitive };
+  }
+
+  const v = auditData?.metadata?.vulnerabilities;
+  if (v) {
+    const total = (v.low ?? 0) + (v.moderate ?? 0) + (v.high ?? 0) + (v.critical ?? 0);
+    // Without per-package detail nothing can be called direct: warn, do not block.
+    return { direct: 0, transitive: total };
+  }
+
+  return { direct: 0, transitive: 0 };
+}
+
+/** Audits the project. An audit that could not run is reported, not mistaken for a clean one. */
 function getVulnerabilities(cwd, manager) {
-  const empty = { direct: 0, transitive: 0 };
+  // Separate stdout/stderr so pnpm WARN lines don't corrupt JSON parsing
+  const result = spawnSync(manager, ["audit", "--json"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: USE_SHELL,
+  });
   try {
-    // Separate stdout/stderr so pnpm WARN lines don't corrupt JSON parsing
-    const result = spawnSync(manager, ["audit", "--json"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const auditData = JSON.parse(result.stdout || "{}");
-
-    // npm and pnpm share the same audit JSON shape for metadata.vulnerabilities.
-    // The advisories object keys are the individual findings; each has a "findings"
-    // array where findings[].paths tells us whether it reaches a direct dep.
-    if (auditData.advisories) {
-      let direct = 0;
-      let transitive = 0;
-      for (const advisory of Object.values(auditData.advisories)) {
-        const isDirectlyReachable = advisory.findings?.some((f) =>
-          f.paths?.some((p) => !p.includes(">")),
-        );
-        if (isDirectlyReachable) {
-          direct++;
-        } else {
-          transitive++;
-        }
-      }
-      return { direct, transitive };
-    }
-
-    // Fallback: only have aggregate counts, can't distinguish direct vs transitive
-    if (auditData.metadata?.vulnerabilities) {
-      const v = auditData.metadata.vulnerabilities;
-      const total =
-        (v.low ?? 0) + (v.moderate ?? 0) + (v.high ?? 0) + (v.critical ?? 0);
-      // Conservatively treat all as transitive (warn but don't block)
-      // since we can't tell without advisory details
-      return { direct: 0, transitive: total };
-    }
-
-    return empty;
-  } catch (e) {
-    return empty;
+    return countVulnerabilities(JSON.parse(result.stdout || "{}"));
+  } catch {
+    log.warn("The audit produced no readable result (offline or unsupported); vulnerabilities were not checked.");
+    return { direct: 0, transitive: 0 };
   }
 }
 
@@ -208,74 +221,50 @@ function runSync(command, cwd) {
   }
 }
 
-function killTree(child) {
-  if (!child || !child.pid) return;
-  if (process.platform === "win32") {
-    try {
-      execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: "ignore" });
-    } catch (e) {}
-  } else {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch (e) {
-      try {
-        child.kill("SIGKILL");
-      } catch (err) {}
-    }
-  }
+/**
+ * The package scripts that prove an update did not break the project, in the
+ * order they run. A `dev` or `start` script is a long-running process whose
+ * only failure signal is crashing early, so it proves nothing.
+ */
+export function smokeScripts(pkg) {
+  return ["build", "test"].filter((name) => typeof pkg.scripts?.[name] === "string");
 }
 
-async function testProject(cwd, manager) {
-  const pkg = JSON.parse(
-    fs.readFileSync(path.join(cwd, "package.json"), "utf8"),
-  );
-
-  // Dynamic script detection priority: dev -> start -> test
-  const testScript = ["dev", "start", "test"].find(
-    (s) => pkg.scripts && pkg.scripts[s],
-  );
-
-  if (!testScript) {
-    log.warn("No suitable test/dev script found. Skipping smoke test.");
+function testProject(cwd, manager) {
+  const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8"));
+  const scripts = smokeScripts(pkg);
+  if (scripts.length === 0) {
+    log.warn("No build or test script found. Skipping smoke test.");
     return true;
   }
-
-  return new Promise((resolve) => {
-    log.info(`Smoke testing via '${manager} run ${testScript}'...`);
-    const child = spawn(manager, ["run", testScript], {
+  for (const script of scripts) {
+    log.info(`Smoke testing via '${manager} run ${script}'...`);
+    const result = spawnSync(manager, ["run", script], {
       cwd,
-      shell: true,
-      detached: process.platform !== "win32",
-      stdio: "pipe",
+      stdio: "inherit",
+      shell: USE_SHELL,
+      timeout: SMOKE_SCRIPT_TIMEOUT_MS,
     });
+    if (result.error || result.status !== 0) {
+      log.error(`'${manager} run ${script}' failed${result.status !== null ? ` with code ${result.status}` : ""}.`);
+      return false;
+    }
+  }
+  log.success("Build and tests pass.");
+  return true;
+}
 
-    let isResolved = false;
-    child.on("error", () => {
-      if (!isResolved) {
-        isResolved = true;
-        resolve(false);
-      }
-    });
-
-    child.on("exit", (code) => {
-      if (!isResolved) {
-        isResolved = true;
-        if (code !== 0 && code !== null)
-          log.error(`Process exited with code ${code}`);
-        resolve(false);
-      }
-    });
-
-    const timer = setTimeout(() => {
-      if (!isResolved) {
-        isResolved = true;
-        log.success(`Project is stable under '${testScript}'.`);
-        killTree(child);
-        resolve(true);
-      }
-    }, DEV_CHECK_DURATION);
-    timer.unref();
-  });
+/** Reinstalls exactly what the lockfile says, replacing whatever the update left in node_modules. */
+function cleanInstallCommand(manager) {
+  switch (manager) {
+    case "pnpm":
+      return "pnpm install --frozen-lockfile";
+    case "yarn":
+      return "yarn install --frozen-lockfile";
+    case "npm":
+    default:
+      return "npm ci";
+  }
 }
 
 class ProjectGuard {
@@ -288,23 +277,30 @@ class ProjectGuard {
       "pnpm-lock.yaml",
     ];
     this.backups = new Map();
+    this.absent = [];
   }
 
   backup() {
     log.step("Creating safety backups...");
     for (const file of this.files) {
       const fullPath = path.join(this.cwd, file);
-      if (fs.existsSync(fullPath))
-        this.backups.set(file, fs.readFileSync(fullPath));
+      if (fs.existsSync(fullPath)) this.backups.set(file, fs.readFileSync(fullPath));
+      else this.absent.push(file);
     }
   }
 
   rollback(manager) {
-    log.warn(`Rolling back changes...`);
+    log.warn("Rolling back changes...");
     for (const [file, content] of this.backups) {
       fs.writeFileSync(path.join(this.cwd, file), content);
     }
-    runSync(`${manager} install`, this.cwd);
+    // A lockfile the update created has no original to restore to.
+    for (const file of this.absent) fs.rmSync(path.join(this.cwd, file), { force: true });
+    const hasLock = this.files.slice(1).some((f) => this.backups.has(f));
+    const restoreCmd = hasLock ? cleanInstallCommand(manager) : `${manager} install`;
+    if (!runSync(restoreCmd, this.cwd)) {
+      log.error(`Could not restore node_modules; run '${restoreCmd}' yourself.`);
+    }
   }
 }
 
@@ -379,7 +375,7 @@ async function updateProject(fullPath) {
     log.success("Lockfile synced.");
 
     // 4. Dynamic Smoke Test
-    const isStable = await testProject(fullPath, manager);
+    const isStable = testProject(fullPath, manager);
     if (!isStable) throw new Error("Project failed stability check.");
 
     log.success("Project updated and verified.");
@@ -389,7 +385,7 @@ async function updateProject(fullPath) {
   }
 }
 
-(async () => {
+async function main() {
   process.on("SIGINT", () => {
     log.warn("\nInterrupted. Exiting...");
     process.exit(1);
@@ -402,4 +398,8 @@ async function updateProject(fullPath) {
     await updateProject(projectPath);
   }
   log.header("ALL OPERATIONS COMPLETE");
-})();
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  await main();
+}

@@ -14,6 +14,42 @@ unchanged.
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-10-18
+
+### Security
+
+- **The protected-key check in the config editor can no longer be bypassed.** `server.properties` is now read the way the game reads it (`java.util.Properties`): `key value`, `key:value` and `key = value` separators, `\uXXXX` and other escapes in keys, continued lines, and later duplicates overriding earlier ones. Appending `online-mode false` after `online-mode=true` used to slip past the check and change the setting (`src/instances/configSecrets.ts`).
+- **Secret redaction works per format.** JSON (nested and minified), TOML inline tables and arrays, YAML block scalars, flow maps and list items, Forge `S:password=...` lines and whitespace-separated properties are redacted, as are passwords in `scheme://user:password@host` URLs. Each placeholder is restored only at its own key; one that moved or has no original is refused.
+- **Stats, whitelist, usercache and the mod manifest are read without following symlinks**, with size limits. The stats directory must resolve inside the server directory, and a `level-name` with a separator or `..` is ignored in favour of `world`, so a mod can no longer point the stats routes at a file only the wrapper can read (`src/instances/stats.ts`, `src/instances/world.ts`, `src/instances/players.ts`, `src/instances/mods.ts`).
+- Config snapshots are created private to the wrapper user (directories 0700, files 0600), and a config file that grew past the size limit since it was listed is refused on write and revert. The log stream refuses a `logs/` directory that links out of the server directory, and the log tail no longer returns trailing zero bytes when the file shrinks while it is read.
+- **`MC_TRUST_PROXY=true` needs a loopback `MC_BIND_HOST`.** On a reachable port anyone could forge `X-Forwarded-For` and dodge the lockout and rate limits, so startup now refuses the combination. A proxy on another host is named by address or CIDR (`MC_TRUST_PROXY=10.0.0.5,192.168.1.0/24`).
+- An API key made of whitespace, with whitespace at either end, or of fewer than 8 distinct characters is rejected at startup.
+- The wrapper's log file is created 0600 in a 0700 directory, and a failed screen fallback no longer writes the console command (which can carry secrets) to it.
+
+### Added
+
+- Per-route body limits: 512 KB on the prune settings and scan routes and 64 KB on upgrade, so a maximal selection or mod list is no longer rejected by the 4 KB global limit.
+- Concurrency caps: at most 6 script-spawning prune and mod-update reads and 2 archive downloads at once per instance, answered with 429 and `Retry-After`. A download gives back its in-flight slot once it starts streaming, as the log stream does.
+- `MC_TRUST_PROXY` accepts a list of proxy addresses and CIDRs.
+
+### Changed
+
+- **Framework errors use the `{ error }` body** (413, malformed JSON, 415, validation), and any unexpected failure answers a fixed 500 body and is logged. The server also sets a 30 s request timeout and a 120 s idle socket timeout.
+- Prune parameters must be integers, and a dimension of `.` or `..` is refused.
+- **A job recovered after a wrapper restart is checked against its process.** The record now holds the boot id and the process start time, so a record from before a reboot, or one whose pid was reused, no longer keeps the instance busy until the unrelated process exits. A recovered job past the 90 minute limit is stopped and its slot released. Output files of scans and jobs that no longer have a record are removed at startup (`src/instances/upgrades.ts`, `src/platform/spawn.ts`).
+- A job that floods stdout no longer stalls the wrapper: one poll reads at most 4 MB and a line over 1 MB is dropped. A timed-out job whose process group survived SIGKILL is logged (see `docs/sudoers-setup.md` for the limit).
+- **Several instances under one Linux user no longer report each other's liveness.** The server process is matched to its instance by working directory where readable, otherwise by its screen session or the unit's main process, instead of taking the user's biggest java process. A stopped instance next to a running one is now reported stopped, and `/info` shows the right pid and memory (`src/platform/host/index.ts`).
+- RCON replies longer than one packet are read in full, an authentication failure reports `RCON auth failed`, and a command's timeout also bounds the connect.
+- Upgrade progress lines carry one of `running`, `done`, `error` or `info`; anything else becomes `info`, and over-long fields are cut.
+- The release tarball is built by the packaging script itself instead of the system `tar`, so it is the same on Linux, macOS and Windows, and packaging refuses a `dist/` older than `src/`.
+- `scripts/update-deps.mjs` reads the current `npm audit` output, runs on Windows, smoke-tests with `build` and `test` instead of `dev`, and restores `node_modules` when it rolls back.
+- Node.js 22 or newer is required (Node 20 is end of life); CI tests 22 and 24.
+- `docs/sudoers-setup.md` lists every command the wrapper runs, including upgrade, prune and `systemctl show`, and shows an exact-argument rule for restore.
+
+### Fixed
+
+- A backup download that failed while reading the file's size leaked the file handle.
+
 ## [4.2.0] - 2026-10-14
 
 ### Security
