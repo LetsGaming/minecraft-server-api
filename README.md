@@ -8,7 +8,7 @@ Intended as the remote backend for [minecraft-bot](https://github.com/LetsGaming
 
 ## Prerequisites
 
-- **Node.js 20+**
+- **Node.js 22+**
 - **PM2** (production): `npm install -g pm2`
 - **`sudo` configured** — see [docs/sudoers-setup.md](./docs/sudoers-setup.md)
 - **GNU `screen`** — for the screen-based command fallback (RCON-less instances)
@@ -22,7 +22,7 @@ Intended as the remote backend for [minecraft-bot](https://github.com/LetsGaming
 From a [release](https://github.com/LetsGaming/minecraft-server-api/releases) (already built; check the tarball against its `.sha256`):
 
 ```bash
-v=4.2.0
+v=4.3.0
 curl -fsSLO "https://github.com/LetsGaming/minecraft-server-api/releases/download/v$v/mc-api-server-$v.tar.gz"
 tar -xzf "mc-api-server-$v.tar.gz" && cd "mc-api-server-$v"
 npm ci --omit=dev
@@ -115,7 +115,7 @@ The file is looked up at `./api-server-config.json` next to `index.js`, or where
 | `MC_BIND_HOST` | both modes | Listen address (default `0.0.0.0`). Use `127.0.0.1` when the bot runs on the same host |
 | `MC_STATE_DIR` | both modes | Where running jobs keep their output files and records (default `./state`; if the wrapper cannot write there, a private `mc-api-server-<uid>` directory under the system temp dir). Must be writable by the wrapper's user and should not be inside a server directory |
 | `MC_BASH_PATH` / `MC_NODE_PATH` | both modes | Absolute paths of `bash` and `node` for the scripts the wrapper runs through `sudo`. Unset means a `PATH` lookup. Must match the paths in your sudoers rules; see [`docs/sudoers-setup.md`](./docs/sudoers-setup.md) |
-| `MC_TRUST_PROXY` | both modes | `true` = trust `X-Forwarded-For` for client IPs — **only behind a proxy that sets it**; see [Security](#security) |
+| `MC_TRUST_PROXY` | both modes | `true` = trust `X-Forwarded-For` for client IPs (needs a loopback `MC_BIND_HOST`), or a comma-separated list of proxy addresses/CIDRs to trust on any bind. **Only behind a proxy that sets the header**; see [Security](#security) |
 | `MC_SSE_MAX_CLIENTS` | both modes | Max concurrent `/logs/stream` clients per instance (default `50`) |
 | `MC_ALLOW_NO_AUTH` | both modes | `true` = keyless **loopback-only** dev mode; see [Security](#security) |
 | `MC_DEBUG` | both modes | `true` = debug log lines |
@@ -143,7 +143,7 @@ See [`variables.example.txt`](./variables.example.txt) for all keys. The file is
 - **Scripts run with a minimal environment.** The `sudo` child inherits only `PATH`, locale and terminal variables plus `HOME`, never `MC_API_KEY` or `RCON_PASSWORD_*`. A script that outlives its timeout gets `SIGTERM`, then `SIGKILL` ten seconds later.
 - **The wrapper refuses to start without an API key** (it can start/stop servers and run arbitrary console commands — keyless would mean unauthenticated remote control). For a local dev instance, `MC_ALLOW_NO_AUTH=true` disables auth **and forces binding to 127.0.0.1**.
 - API-key comparison is constant-time; failed authentications are limited to 20 per IP per 15 minutes. Reads are limited to 100 per minute per IP. Writes are limited to 10 per minute per IP and the budget is charged only after the request authenticated, so unauthenticated traffic from a shared address cannot drain it.
-- **Behind a reverse proxy, set `MC_TRUST_PROXY=true`** so the rate limiters see the real client IP from `X-Forwarded-For`. Without it every request carries the proxy's IP — one attacker's failed keys would lock out *all* clients, and per-attacker throttling is meaningless. Only enable it when the proxy **sets** (never merely forwards) the header; a spoofable header lets clients rotate limiter buckets at will. Default `false` is correct for direct binds.
+- **Behind a reverse proxy, set `MC_TRUST_PROXY`** (`true` with a loopback bind, or the proxy's address or CIDR when it runs elsewhere; `true` on a non-loopback bind is refused at startup) so the rate limiters see the real client IP from `X-Forwarded-For`. Without it every request carries the proxy's IP. One attacker's failed keys would lock out *all* clients, and per-attacker throttling is meaningless. Only enable it when the proxy **sets** (never merely forwards) the header; a spoofable header lets clients rotate limiter buckets at will. Default `false` is correct for direct binds.
 - SSE log streams are capped at 50 concurrent clients per instance (`MC_SSE_MAX_CLIENTS` to adjust); requests beyond the cap receive 503. More than 32 requests in flight at once (other than `/health` and `/metrics`) also get a fast 503 with `Retry-After`. Slow SSE consumers are skipped while their socket is backpressured instead of buffering unboundedly.
 - Request bodies are capped at 4 KB, except `PUT /instances/:id/configs/:fileId`, which accepts about twice the 1 MB config cap. Console commands are limited to 1400 bytes and rejected with `400` when they contain control characters (the `screen` fallback strips them again as a second guard). Script arguments (at most 5, each `[\w.@-]{1,128}`), mod slugs and stats UUIDs go through strict allowlists.
 - Wrapper log lines escape control, separator and bidi characters and are length-capped, so text from a script or a player cannot forge a log line.

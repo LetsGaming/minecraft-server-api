@@ -15,7 +15,7 @@ function config(overrides: { key?: string; user?: string } = {}): AppConfig {
     backupsPath: "",
     scriptsDir: "/srv/mc/scripts",
   };
-  return { PORT: 3000, API_KEY: overrides.key ?? "k".repeat(MIN_API_KEY_LENGTH), instances: { survival: inst } };
+  return { PORT: 3000, API_KEY: overrides.key ?? "0123456789abcdef".repeat(MIN_API_KEY_LENGTH / 16), instances: { survival: inst } };
 }
 
 describe("validateConfig", () => {
@@ -27,6 +27,19 @@ describe("validateConfig", () => {
     const problems = validateConfig(config({ key: "short-key" }));
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatch(/at least 32/);
+  });
+
+  it.each([
+    ["only spaces", " ".repeat(MIN_API_KEY_LENGTH)],
+    ["one repeated character", "a".repeat(MIN_API_KEY_LENGTH)],
+    ["two alternating characters", "ab".repeat(MIN_API_KEY_LENGTH)],
+    ["surrounding whitespace", " 0123456789abcdef0123456789abcdef"],
+  ])("rejects a key that is long but weak: %s", (_label, key) => {
+    expect(validateConfig(config({ key }))).toHaveLength(1);
+  });
+
+  it("accepts a generated hex key", () => {
+    expect(validateConfig(config({ key: "9f3b7c1e5a2d48b6c0e7f1a39d5b2e84c6a1f07d3b95e2c48a6d0f17b3e5c9a2" }))).toEqual([]);
   });
 
   it("leaves an absent key to the startup no-auth decision", () => {

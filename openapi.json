@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "mc-api-server",
-    "version": "4.2.0",
+    "version": "4.3.0",
     "description": "Lightweight HTTP wrapper for managing Minecraft server instances, the\nremote backend for minecraft-bot.\n\nGenerated from the router by `npm run openapi:generate`. Do not edit by hand.\n\nEvery route except `GET /health` requires the `x-api-key` header. Every\nnon-2xx body is `{ \"error\": \"<message>\" }`. Clients negotiate by the\nfeature names and versions in `GET /manifest`, not by wrapper version."
   },
   "servers": [
@@ -453,7 +453,7 @@
             }
           },
           "429": {
-            "description": "Rate limited",
+            "description": "Too many requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -1199,6 +1199,16 @@
           },
           "412": {
             "description": "Precondition failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large",
             "content": {
               "application/json": {
                 "schema": {
@@ -2647,7 +2657,7 @@
             }
           },
           "429": {
-            "description": "Rate limited",
+            "description": "Too many requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -2942,6 +2952,16 @@
               }
             }
           },
+          "413": {
+            "description": "Payload too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "423": {
             "description": "Locked: another operation holds the instance",
             "content": {
@@ -3209,7 +3229,7 @@
             }
           },
           "429": {
-            "description": "Rate limited",
+            "description": "Too many requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -3338,7 +3358,7 @@
             }
           },
           "429": {
-            "description": "Rate limited",
+            "description": "Too many requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -3533,6 +3553,16 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large",
             "content": {
               "application/json": {
                 "schema": {
@@ -3789,7 +3819,7 @@
             }
           },
           "429": {
-            "description": "Rate limited",
+            "description": "Too many requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -3889,6 +3919,16 @@
               }
             }
           },
+          "413": {
+            "description": "Payload too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limited",
             "content": {
@@ -3973,7 +4013,7 @@
             }
           },
           "429": {
-            "description": "Rate limited",
+            "description": "Too many requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -4114,7 +4154,7 @@
             }
           },
           "429": {
-            "description": "Rate limited",
+            "description": "Too many requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -6824,7 +6864,7 @@
         "type": "object",
         "properties": {
           "thresholdMinutes": {
-            "type": "number"
+            "type": "integer"
           },
           "spawnRadiusChunks": {
             "type": "integer"

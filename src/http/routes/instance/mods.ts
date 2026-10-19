@@ -43,6 +43,7 @@ import {
   queryParams,
 } from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
+import { withSpawnReadCap } from "../../routeCaps.js";
 import { MOD_VALIDATION } from "../../../instances/mods.js";
 import {
   CompatBusyError,
@@ -188,7 +189,7 @@ export function registerModRoutes(
       tags: ["mods"],
       params: instanceParams(),
       querystring: queryParams({ mcVersion: "Check against this Minecraft version." }),
-      response: { 200: ModUpdateCheck, ...errors(400, 404, 500) },
+      response: { 200: ModUpdateCheck, ...errors(400, 404, 429, 500) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
@@ -197,11 +198,13 @@ export function registerModRoutes(
       if (mcVersion !== undefined && !MC_VERSION_RE.test(mcVersion)) {
         return reply.status(400).send({ error: "Invalid mcVersion" });
       }
-      try {
-        return await entry.checkUpdates(mcVersion);
-      } catch (err) {
-        return internalError(reply, `mods/updates ${req.params.id}`, err);
-      }
+      return withSpawnReadCap(req.params.id, reply, async () => {
+        try {
+          return await entry.checkUpdates(mcVersion);
+        } catch (err) {
+          return internalError(reply, `mods/updates ${req.params.id}`, err);
+        }
+      });
     },
   );
 

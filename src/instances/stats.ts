@@ -8,11 +8,14 @@ import path from "path";
 import { cached } from "../platform/cache.js";
 import { log } from "../platform/logger.js";
 import { mapLimit } from "../platform/concurrency.js";
+import { isInside, readFileNoFollow } from "../platform/safeFs.js";
 import type { World } from "./world.js";
 import type { InstanceConfig } from "../config/types.js";
 
 /** Above the 4-thread libuv pool, low enough to leave it room for other work. */
 const STATS_READ_CONCURRENCY = 8;
+/** A stats file is a few kilobytes; megabytes means something else wrote it. */
+const MAX_STATS_BYTES = 2 * 1024 * 1024;
 /** Matches the bot's own loadAllStats() TTL, so the two never disagree. */
 const ALL_STATS_FRESH_MS = 30_000;
 const ALL_STATS_STALE_MS = 300_000;
@@ -42,13 +45,30 @@ export function createStats(cfg: InstanceConfig, world: World) {
  *
  * Resolution is cached per level name, so a world switch re-probes.
  */
-async function resolveStatsDir(): Promise<string> {
+async function resolveStatsDir(): Promise<string | null> {
   const levelName = await world.getLevelName();
-  if (_statsDir && _statsDir.levelName === levelName) return _statsDir.dir;
-
-  for (const rel of STATS_DIR_CANDIDATES) {
-    const dir = path.join(cfg.serverPath, levelName, rel);
+  if (_statsDir && _statsDir.levelName === levelName) {
+    // The instance user can swap the directory for a link after it was probed.
     try {
+      if ((await fsp.realpath(_statsDir.dir)) === _statsDir.dir) return _statsDir.dir;
+    } catch {
+      /* gone: probe again */
+    }
+    _statsDir = null;
+  }
+
+  let realServer: string | null = null;
+  try {
+    realServer = await fsp.realpath(cfg.serverPath);
+  } catch {
+    /* no server directory yet */
+  }
+  for (const rel of STATS_DIR_CANDIDATES) {
+    if (realServer === null) break;
+    let dir: string;
+    try {
+      dir = await fsp.realpath(path.join(cfg.serverPath, levelName, rel));
+      if (!isInside(dir, realServer)) continue;
       if (!(await fsp.stat(dir)).isDirectory()) continue;
     } catch {
       continue; // next candidate
@@ -58,21 +78,22 @@ async function resolveStatsDir(): Promise<string> {
     return dir;
   }
 
-  // None exist yet — which is normal on a fresh world, since the server
-  // creates the directory when someone first plays. Return the vanilla
-  // path so messages name the expected location, and do not cache: the
-  // real one appears later and must be picked up without a restart.
-  return path.join(cfg.serverPath, levelName, STATS_DIR_CANDIDATES[0]!);
+  // None usable: normal on a fresh world, since the server creates the
+  // directory when someone first plays. A candidate that exists but leaves the
+  // server directory is treated the same way and never read. Not cached, so the
+  // real one is picked up without a restart.
+  return null;
 }
 
 async function getStats(uuid: string): Promise<unknown> {
   const statsDir = await resolveStatsDir();
+  if (statsDir === null) return null;
   // A-11: path.relative() guard — more robust than startsWith()
   const resolved = path.resolve(statsDir, `${uuid}.json`);
   const rel = path.relative(statsDir, resolved);
   if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
   try {
-    return JSON.parse(await fsp.readFile(resolved, "utf-8")) as unknown;
+    return JSON.parse((await readFileNoFollow(resolved, MAX_STATS_BYTES)).toString("utf-8")) as unknown;
   } catch {
     return null;
   }
@@ -80,6 +101,7 @@ async function getStats(uuid: string): Promise<unknown> {
 
 async function listStatsUuids(): Promise<string[]> {
   const dir = await resolveStatsDir();
+  if (dir === null) return [];
   try {
     return (await fsp.readdir(dir))
       .filter((f) => f.endsWith(".json"))
@@ -116,6 +138,7 @@ async function listStatsUuids(): Promise<string[]> {
  */
 async function deleteStats(uuid: string): Promise<boolean> {
   const statsDir = await resolveStatsDir();
+  if (statsDir === null) return false;
   // A-11: same path.relative() traversal guard as getStats — the route
   // additionally enforces the UUID allowlist, this is defence in depth.
   const resolved = path.resolve(statsDir, `${uuid}.json`);

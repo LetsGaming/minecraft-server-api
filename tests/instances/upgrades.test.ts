@@ -7,6 +7,8 @@ import {
   createUpgrades,
   parseUpgradeLine,
   PrunePlanMissingError,
+  RECOVERED_KILL_GRACE_MS,
+  UPGRADE_TIMEOUT_MS,
   UpgradeUnavailableError,
 } from "../../src/instances/upgrades.js";
 import { createOperationSlot, OperationBusyError } from "../../src/instances/operationSlot.js";
@@ -55,6 +57,28 @@ describe("parseUpgradeLine", () => {
     expect(parseUpgradeLine("not json")).toBeNull();
     expect(parseUpgradeLine('{"hello":1}')).toBeNull();
     expect(parseUpgradeLine("[1]")).toBeNull();
+  });
+
+  it("keeps the status inside the known set", () => {
+    for (const status of ["running", "done", "error", "info"]) {
+      expect(parseUpgradeLine(JSON.stringify({ seq: 1, phase: "p", status, msg: "" }))).toMatchObject({
+        event: { status },
+      });
+    }
+    expect(parseUpgradeLine('{"seq":1,"phase":"p","status":"<script>","msg":""}')).toMatchObject({
+      event: { status: "info" },
+    });
+    expect(parseUpgradeLine('{"seq":1,"phase":"p","status":7,"msg":""}')).toMatchObject({
+      event: { status: "info" },
+    });
+    expect(parseUpgradeLine('{"seq":1,"phase":"p","msg":""}')).toMatchObject({ event: { status: "running" } });
+  });
+
+  it("bounds the phase and message", () => {
+    const parsed = parseUpgradeLine(
+      JSON.stringify({ seq: 1, phase: "p".repeat(500), status: "done", msg: "m".repeat(10_000) }),
+    );
+    expect(parsed).toMatchObject({ event: { phase: "p".repeat(64), msg: "m".repeat(2000) } });
   });
 });
 
@@ -212,7 +236,11 @@ describe("after a wrapper restart", () => {
 });
 
 describe("a job that outlives the wrapper (W-009)", () => {
-  function recordFixture(alive: () => boolean) {
+  function recordFixture(
+    alive: () => boolean,
+    record: Record<string, unknown> = {},
+    deps: Record<string, unknown> = {},
+  ) {
     fx = makeFixture();
     touch(path.join(fx.cfg.scriptsDir, "update", "upgrade.sh"));
     const recordDir = path.join(fx.root, "jobs");
@@ -221,7 +249,7 @@ describe("a job that outlives the wrapper (W-009)", () => {
     fs.writeFileSync(outFile, "");
     fs.writeFileSync(
       path.join(recordDir, `${fx.cfg.id}.upgrade.json`),
-      JSON.stringify({ pgid: 999_999, jobId: "11111111-2222-4333-8444-555555555555", kind: "upgrade", mcVersion: "1.21.4", startedAt: 1, files: [outFile] }),
+      JSON.stringify({ pgid: 999_999, jobId: "11111111-2222-4333-8444-555555555555", kind: "upgrade", mcVersion: "1.21.4", startedAt: Date.now(), files: [outFile], ...record }),
     );
     fs.mkdirSync(path.join(fx.cfg.scriptsDir, "common"), { recursive: true });
     fs.writeFileSync(
@@ -234,6 +262,7 @@ describe("a job that outlives the wrapper (W-009)", () => {
       recordDir,
       isAlive: alive,
       recoveryPollMs: 10,
+      ...deps,
     });
     return { slot, upgrades, recordDir, outFile };
   }
@@ -260,5 +289,139 @@ describe("a job that outlives the wrapper (W-009)", () => {
     const { slot, recordDir } = recordFixture(() => false);
     expect(slot.current()).toBeNull();
     expect(fs.existsSync(path.join(recordDir, `${fx.cfg.id}.upgrade.json`))).toBe(false);
+  });
+});
+
+describe("telling a recorded job from a stranger (kill(2) says EPERM for both)", () => {
+  function recordFixture(
+    record: Record<string, unknown>,
+    identity: { bootId: () => string | null; startTime: (pid: number) => string | null },
+    deps: Record<string, unknown> = {},
+  ) {
+    fx = makeFixture();
+    touch(path.join(fx.cfg.scriptsDir, "update", "upgrade.sh"));
+    const recordDir = path.join(fx.root, "jobs");
+    fs.mkdirSync(recordDir, { recursive: true });
+    const outFile = path.join(recordDir, "upgrade-1.out");
+    fs.writeFileSync(outFile, "");
+    const recordFile = path.join(recordDir, `${fx.cfg.id}.upgrade.json`);
+    fs.writeFileSync(
+      recordFile,
+      JSON.stringify({
+        pgid: 4242,
+        jobId: "11111111-2222-4333-8444-555555555555",
+        kind: "upgrade",
+        mcVersion: "1.21.4",
+        startedAt: Date.now(),
+        files: [outFile],
+        ...record,
+      }),
+    );
+    const slot = createOperationSlot();
+    createUpgrades(fx.cfg, slot, {
+      spawnJob: fakeSpawn().spawnJob as never,
+      recordDir,
+      isAlive: () => true,
+      identity,
+      recoveryPollMs: 10,
+      ...deps,
+    });
+    return { slot, recordFile, outFile };
+  }
+
+  it("releases a record from before a reboot, although its group id is taken by someone else", () => {
+    const { slot, recordFile, outFile } = recordFixture(
+      { bootId: "boot-A", procStart: "100" },
+      { bootId: () => "boot-B", startTime: () => "100" },
+    );
+    expect(slot.current()).toBeNull();
+    expect(fs.existsSync(recordFile)).toBe(false);
+    expect(fs.existsSync(outFile)).toBe(false);
+  });
+
+  it("releases a record whose pid was reused within the same boot", () => {
+    const { slot, recordFile } = recordFixture(
+      { bootId: "boot-A", procStart: "100" },
+      { bootId: () => "boot-A", startTime: () => "9999" },
+    );
+    expect(slot.current()).toBeNull();
+    expect(fs.existsSync(recordFile)).toBe(false);
+  });
+
+  it("keeps the slot while boot id and start time still agree", () => {
+    const { slot } = recordFixture(
+      { bootId: "boot-A", procStart: "100" },
+      { bootId: () => "boot-A", startTime: () => "100" },
+    );
+    expect(slot.current()).toMatchObject({ kind: "upgrade" });
+  });
+
+  it("keeps the slot when the start time cannot be read (hidepid) but the boot matches", () => {
+    const { slot } = recordFixture(
+      { bootId: "boot-A", procStart: "100" },
+      { bootId: () => "boot-A", startTime: () => null },
+    );
+    expect(slot.current()).toMatchObject({ kind: "upgrade" });
+  });
+
+  it("accepts a record written without identity fields", () => {
+    const { slot } = recordFixture({}, { bootId: () => "boot-A", startTime: () => "5" });
+    expect(slot.current()).toMatchObject({ kind: "upgrade" });
+  });
+
+  it("stops a recovered job past the time limit and gives up its slot", async () => {
+    const signals: string[] = [];
+    let alive = true;
+    const { slot, recordFile } = recordFixture(
+      { startedAt: 0 },
+      { bootId: () => null, startTime: () => null },
+      {
+        now: () => UPGRADE_TIMEOUT_MS + 1,
+        isAlive: () => alive,
+        signalGroup: (_pgid: number, signal: string) => signals.push(signal),
+      },
+    );
+    expect(signals[0]).toBe("SIGTERM");
+    expect(slot.current()).toBeNull();
+    expect(fs.existsSync(recordFile)).toBe(false);
+    alive = false;
+  });
+
+  it("releases a recovered job that outlives the limit and the kill grace", async () => {
+    const signals: string[] = [];
+    let clock = 1_000;
+    const { slot } = recordFixture(
+      { startedAt: 1_000 },
+      { bootId: () => null, startTime: () => null },
+      {
+        now: () => clock,
+        signalGroup: (_pgid: number, signal: string) => signals.push(signal),
+      },
+    );
+    expect(slot.current()).toMatchObject({ kind: "upgrade" });
+
+    clock = 1_000 + UPGRADE_TIMEOUT_MS + 1;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(slot.current()).toMatchObject({ kind: "upgrade" });
+
+    clock += 2 * RECOVERED_KILL_GRACE_MS + 1;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(slot.current()).toBeNull();
+  });
+
+  it("records the boot id and start time of a job it spawns", async () => {
+    fx = makeFixture();
+    touch(path.join(fx.cfg.scriptsDir, "update", "upgrade.sh"));
+    const recordDir = path.join(fx.root, "jobs");
+    const slot = createOperationSlot();
+    const upgrades = createUpgrades(fx.cfg, slot, {
+      spawnJob: (() => ({ done: new Promise(() => {}), pid: 777, outputFiles: [] })) as never,
+      recordDir,
+      identity: { bootId: () => "boot-X", startTime: (pid) => (pid === 777 ? "31337" : null) },
+    });
+    await upgrades.startUpgrade({ mcVersion: "1.21.4" });
+    const record = JSON.parse(fs.readFileSync(path.join(recordDir, `${fx.cfg.id}.upgrade.json`), "utf8")) as Record<string, unknown>;
+    expect(record).toMatchObject({ pgid: 777, bootId: "boot-X", procStart: "31337" });
   });
 });

@@ -8,7 +8,8 @@
  * one; see instances/backupFiles.ts for why that is structural rather than a
  * validation rule.
  */
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
+import type { ReadStream, Stats } from "fs";
 import type { FileHandle } from "fs/promises";
 
 import type { ServerState } from "../../../contracts/wire.js";
@@ -23,7 +24,9 @@ import {
   queryParams,
 } from "../../../contracts/routeSchema.js";
 import { internalError } from "../../errors.js";
+import { endRequest } from "../../../platform/metrics.js";
 import { openNoFollow } from "../../../platform/safeFs.js";
+import { enterDownload } from "../../routeCaps.js";
 import {
   INSTANCE_PREFIX as P,
   type InstanceParams,
@@ -128,7 +131,7 @@ export function registerBackupFileRoutes(
       response: {
         200: { type: "string" },
         206: { type: "string" },
-        ...errors(400, 404, 416),
+        ...errors(400, 404, 416, 429),
       },
     } },
     async (req, reply) => {
@@ -149,13 +152,23 @@ export function registerBackupFileRoutes(
       // check, and take the size from the open file rather than the index,
       // which can be minutes old (a replaced or still-growing archive would
       // otherwise go out silently truncated).
+      const release = enterDownload(req.params.id, reply);
+      if (!release) return reply;
       let fh: FileHandle;
       try {
         fh = await openNoFollow(absPath);
       } catch {
+        release();
         return reply.status(404).send({ error: "Backup not found" });
       }
-      const stat = await fh.stat();
+      let stat: Stats;
+      try {
+        stat = await fh.stat();
+      } catch (err) {
+        await fh.close();
+        release();
+        throw err;
+      }
       const size = stat.size;
       const etag = `"${size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
       // A resume against a different file would splice two archives together.
@@ -166,12 +179,22 @@ export function registerBackupFileRoutes(
 
       if (range === "unsatisfiable") {
         await fh.close();
+        release();
         return reply
           .status(416)
           .header("content-range", `bytes */${size}`)
           .header("etag", etag)
           .send({ error: "Requested range not satisfiable" });
       }
+
+      // A download is a long transfer, not work in progress: it gives back the
+      // global in-flight slot once it starts, and holds a download slot until
+      // the connection is done.
+      const sendStream = (stream: ReadStream): FastifyReply => {
+        endRequest(req.raw);
+        reply.raw.once("close", release);
+        return reply.send(stream);
+      };
 
       // Content-Disposition carries only the basename the index produced, and
       // that name came from readdir — but quote it anyway so a filename with a
@@ -194,7 +217,7 @@ export function registerBackupFileRoutes(
             "content-range",
             `bytes ${range.start}-${range.end}/${size}`,
           );
-        return reply.send(fh.createReadStream({ start: range.start, end: range.end }));
+        return sendStream(fh.createReadStream({ start: range.start, end: range.end }));
       }
 
       // Content-Length lets the browser draw its own progress bar, which is
@@ -202,7 +225,7 @@ export function registerBackupFileRoutes(
       void reply.header("content-length", String(size));
       // Streamed, never buffered: reading a multi-gigabyte archive into memory
       // to hand it over would take the wrapper down on the first big world.
-      return reply.send(fh.createReadStream());
+      return sendStream(fh.createReadStream());
     },
   );
 

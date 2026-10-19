@@ -770,7 +770,7 @@ export const PruneParamsRequest = named(
   "PruneParamsRequest",
   object(
     {
-      thresholdMinutes: number,
+      thresholdMinutes: integer,
       spawnRadiusChunks: integer,
       playerRadiusChunks: integer,
       bufferChunks: integer,

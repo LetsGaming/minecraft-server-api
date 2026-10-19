@@ -22,6 +22,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+import { log } from "./logger.js";
 import { REPO_ROOT } from "./paths.js";
 
 /** What the callers below need of the instance, and nothing more. */
@@ -323,6 +324,11 @@ export function privateTempDir(): string {
 /** How often a running job's output file is read for new lines. */
 const JOB_POLL_MS = 250;
 
+/** Most one poll reads, so a script that floods stdout cannot hold the event loop. */
+const JOB_DRAIN_BYTES_PER_POLL = 4 * 1024 * 1024;
+/** Longest line kept; the rest of a longer one is dropped up to its newline. */
+const JOB_LINE_MAX_BYTES = 1024 * 1024;
+
 /** Is the process group still there? EPERM means it is, just not ours to signal. */
 export function processGroupAlive(pgid: number): boolean {
   try {
@@ -331,6 +337,89 @@ export function processGroupAlive(pgid: number): boolean {
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+/**
+ * What tells one process from a later one that got the same pid: the
+ * kernel's id for this boot (pids restart from zero at every boot) and the
+ * process's start time in clock ticks since boot (pids are reused within a
+ * boot). Both are null off Linux.
+ */
+export interface ProcessIdentity {
+  bootId(): string | null;
+  startTime(pid: number): string | null;
+}
+
+/** Field 22 of /proc/<pid>/stat. The command name may hold spaces and parentheses, so count from the last ")". */
+export function parseProcStartTime(stat: string): string | null {
+  const close = stat.lastIndexOf(")");
+  if (close < 0) return null;
+  const fields = stat.slice(close + 2).split(" ");
+  const start = fields[19];
+  return start !== undefined && /^\d+$/.test(start) ? start : null;
+}
+
+export function procIdentity(procRoot = "/proc"): ProcessIdentity {
+  return {
+    bootId() {
+      try {
+        return fs.readFileSync(path.join(procRoot, "sys", "kernel", "random", "boot_id"), "utf8").trim() || null;
+      } catch {
+        return null;
+      }
+    },
+    startTime(pid) {
+      try {
+        return parseProcStartTime(fs.readFileSync(path.join(procRoot, String(pid), "stat"), "utf8"));
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+/**
+ * Remove job output files nothing refers to any more: a wrapper that
+ * stopped mid-scan leaves its `.out`/`.err` behind, and only a job record
+ * (an upgrade or prune in progress) names files worth keeping. Files younger
+ * than `minAgeMs` are left alone, so a predecessor still shutting down
+ * keeps its live ones.
+ */
+export function sweepOrphanedJobFiles(
+  dir = jobStateDir(),
+  { minAgeMs = 60_000, nowMs = Date.now() }: { minAgeMs?: number; nowMs?: number } = {},
+): number {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  const keep = new Set<string>();
+  for (const name of names) {
+    if (!name.endsWith(".upgrade.json")) continue;
+    try {
+      const record: unknown = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
+      const files = (record as { files?: unknown }).files;
+      if (Array.isArray(files)) for (const f of files) if (typeof f === "string") keep.add(path.resolve(f));
+    } catch {
+      /* an unreadable record protects nothing */
+    }
+  }
+  let removed = 0;
+  for (const name of names) {
+    if (!name.endsWith(".out") && !name.endsWith(".err")) continue;
+    const file = path.join(dir, name);
+    if (keep.has(path.resolve(file))) continue;
+    try {
+      if (Math.max(0, nowMs - fs.statSync(file).mtimeMs) < minAgeMs) continue;
+      fs.rmSync(file, { force: true });
+      removed++;
+    } catch {
+      /* best effort */
+    }
+  }
+  return removed;
 }
 
 /**
@@ -393,6 +482,7 @@ export function spawnJobAsInstanceUser(
     child.stdin?.end(opts.input ?? "");
 
     let pending = "";
+    let skipToNewline = false;
     let readOffset = 0;
     let sudoError = false;
     let killed = false;
@@ -406,12 +496,26 @@ export function spawnJobAsInstanceUser(
       }
       try {
         const size = fs.fstatSync(fd).size;
-        while (readOffset < size) {
-          const chunk = Buffer.alloc(Math.min(64 * 1024, size - readOffset));
+        const stop = Math.min(size, readOffset + JOB_DRAIN_BYTES_PER_POLL);
+        while (readOffset < stop) {
+          const chunk = Buffer.alloc(Math.min(64 * 1024, stop - readOffset));
           const n = fs.readSync(fd, chunk, 0, chunk.length, readOffset);
           if (n <= 0) break;
           readOffset += n;
           pending += chunk.subarray(0, n).toString();
+          if (!skipToNewline && pending.length > JOB_LINE_MAX_BYTES && !pending.includes("\n")) {
+            pending = "";
+            skipToNewline = true;
+          }
+          if (skipToNewline) {
+            const nl = pending.indexOf("\n");
+            if (nl === -1) {
+              pending = "";
+            } else {
+              pending = pending.slice(nl + 1);
+              skipToNewline = false;
+            }
+          }
         }
       } finally {
         fs.closeSync(fd);
@@ -470,6 +574,13 @@ export function spawnJobAsInstanceUser(
         if (finalTimer) clearTimeout(finalTimer);
         clearInterval(poll);
         cleanup();
+        if (child.pid !== undefined && processGroupAlive(child.pid)) {
+          log.warn(
+            "spawn",
+            `${opts.label}: process group ${child.pid} survived SIGKILL; ` +
+              `sudo may not have passed the signal on to a script running as ${target.linuxUser}`,
+          );
+        }
         reject(new Error(`${opts.label} timed out after ${opts.timeoutMs / 1000}s`));
       };
       signalGroup("SIGTERM");

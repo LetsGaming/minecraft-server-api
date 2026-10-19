@@ -27,6 +27,20 @@ The last line is the backup restore route. It is not a `scripts/run`
 action: the archive path is one the wrapper resolved from its own backup
 listing, never one a client sent.
 
+The version upgrade, chunk prune and health routes add three more shapes:
+
+```
+sudo -n -u minecraft bash /opt/minecraft/scripts/survival/update/upgrade.sh <mcVersion> [--prune-plan=<id>] [--expect-unavailable=<slugs>] [--countdown=<seconds>]
+sudo -n -u minecraft bash /opt/minecraft/scripts/survival/update/upgrade.sh --prune-only --prune-plan=<id> [--countdown=<seconds>]
+sudo -n -u minecraft node /opt/minecraft/scripts/survival/world/prune-chunks.js <--scan | --settings=get|set | --dimensions | --status | --inspect … | --tile …>
+sudo -n systemctl show <instanceId>.service -p NRestarts,ActiveState --value
+sudo -n systemctl show <instanceId>.service -p MainPID --value
+```
+
+The two `systemctl show` lines run as root (no `-u`), are read-only, and are
+best effort: without the grant the wrapper simply reports no restart count
+and falls back to the other liveness probes.
+
 Mod operations (the `/mods` routes) run the setup suite's Node scripts as
 the same user:
 
@@ -39,8 +53,17 @@ sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/check-updates.j
 sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/toggle-mod.js --disable|--enable --json -- <slug>
 ```
 
-Nothing else goes through sudo. Host metrics (`/info`) use plain `ps`
-and `df`, which need no privileges.
+Those are all of the wrapper's sudo calls. Host metrics (`/info`) use plain
+`ps` and `df`, which need no privileges.
+
+A job started with a time limit (upgrade, prune, restore, scripts) is stopped
+at the limit by signalling the process group of the `sudo` process the
+wrapper started. `sudo` passes signals on to the command it runs, but whether
+a script running as another user receives them depends on the `sudo` version
+and its `use_pty` setting; this has not been verified against every
+configuration. The wrapper logs a warning when the group is still alive after
+SIGKILL, and releases the instance's busy slot after a short grace period
+either way, so an operator should check for a leftover process in that case.
 
 ## Entries
 
@@ -62,8 +85,14 @@ apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/
 apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/smart_restart.sh *
 apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/rollback.sh *
 apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/backup/backup.sh *
-apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/backup/restore.sh *
 apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/misc/status.sh *
+# Restore: exactly the arguments the wrapper passes, with the archive under the backups folder.
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/backup/restore.sh --file /opt/minecraft/backups/survival/* --y
+# Version upgrade and chunk prune (only for the routes that start them).
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/bash /opt/minecraft/scripts/survival/update/upgrade.sh *
+apiuser ALL=(minecraft) NOPASSWD: /usr/bin/node /opt/minecraft/scripts/survival/world/prune-chunks.js *
+# Read-only unit state for the health probe, as root, for this instance's unit only.
+apiuser ALL=(root) NOPASSWD: /usr/bin/systemctl show survival.service *
 ```
 
 The two `screen` rules are deliberately narrow. A bare `/usr/bin/screen`
@@ -102,8 +131,11 @@ The trailing `*` permits arguments. The wrapper already allowlists them
 hard (at most 5 strings of `[\w.@-]{1,128}`, no slashes), so the
 sudo-side wildcard does not reopen what the API layer closed. The restore
 rule is the exception: its `--file` argument is an absolute path the wrapper
-chose, so keep that rule on the exact `restore.sh` path. If you
-prefer defence in depth over convenience, enumerate exact argument
+chose, so the rule above names `--file` and `--y` literally and confines the
+archive to the backups folder. A sudoers `*` in arguments still matches `/`
+and spaces, so the rule alone does not stop `..`; the restore script refuses
+an archive outside the backups folder, and the rule keeps every other flag
+out. If you prefer defence in depth over convenience, enumerate exact argument
 lists instead.
 
 ## Verifying
@@ -114,6 +146,7 @@ As the API user:
 sudo -n -u minecraft screen -list && echo OK
 sudo -n -u minecraft bash /opt/minecraft/scripts/survival/misc/status.sh && echo OK
 sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/check-updates.js --json -- && echo OK
+sudo -n systemctl show survival.service -p ActiveState --value
 ```
 
 `sudo: a password is required` means the entry doesn't match — compare

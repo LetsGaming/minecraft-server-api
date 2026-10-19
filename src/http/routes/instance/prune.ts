@@ -39,6 +39,7 @@ import { internalError } from "../../errors.js";
 import { PruneBusyError, PruneScriptError, PruneUnavailableError } from "../../../instances/prune.js";
 import { PrunePlanMissingError, UpgradeUnavailableError, MAX_COUNTDOWN_SECONDS } from "../../../instances/upgrades.js";
 import { PLAN_ID_RE } from "./operations.js";
+import { withSpawnReadCap } from "../../routeCaps.js";
 import {
   INSTANCE_PREFIX as P,
   type InstanceParams,
@@ -47,6 +48,10 @@ import {
 
 const JOB_ID_RE = /^[a-f0-9-]{36}$/;
 const DIMENSION_RE = /^[a-z0-9_.:-]{1,64}$/;
+/** Roughly a maximal selection (2500 ops) plus zones; the global limit is far smaller. */
+const PRUNE_BODY_LIMIT_BYTES = 512 * 1024;
+const validDimension = (v: unknown): v is string =>
+  typeof v === "string" && DIMENSION_RE.test(v) && v !== "." && v !== "..";
 const MAX_ZONES = 100;
 const MAX_DIMENSIONS = 32;
 const MAX_COORD = 2_000_000;
@@ -56,7 +61,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const coord = (v: unknown): v is number => Number.isInteger(v) && Math.abs(v as number) <= MAX_COORD;
 
 /**
@@ -69,14 +73,14 @@ export function parsePruneParams(body: unknown): Partial<PruneParamsBody> | null
   const out: Partial<PruneParamsBody> = {};
   for (const key of ["thresholdMinutes", "spawnRadiusChunks", "playerRadiusChunks", "bufferChunks"] as const) {
     if (body[key] === undefined) continue;
-    if (!finite(body[key]) || (body[key] as number) < 0 || (body[key] as number) > 1_000_000) return null;
+    if (!Number.isInteger(body[key]) || (body[key] as number) < 0 || (body[key] as number) > 1_000_000) return null;
     out[key] = body[key] as number;
   }
   if (body.zones !== undefined) {
     if (!Array.isArray(body.zones) || body.zones.length > MAX_ZONES) return null;
     const zones = [];
     for (const z of body.zones) {
-      if (!isRecord(z) || typeof z.dimension !== "string" || !DIMENSION_RE.test(z.dimension)) return null;
+      if (!isRecord(z) || !validDimension(z.dimension)) return null;
       if (![z.x1, z.z1, z.x2, z.z2].every(coord)) return null;
       const name = typeof z.name === "string" ? z.name.slice(0, 64) : "";
       zones.push({ name, dimension: z.dimension, x1: z.x1 as number, z1: z.z1 as number, x2: z.x2 as number, z2: z.z2 as number });
@@ -87,7 +91,7 @@ export function parsePruneParams(body: unknown): Partial<PruneParamsBody> | null
     if (
       !Array.isArray(body.dimensions) ||
       body.dimensions.length > MAX_DIMENSIONS ||
-      !body.dimensions.every((d) => typeof d === "string" && DIMENSION_RE.test(d))
+      !body.dimensions.every(validDimension)
     ) {
       return null;
     }
@@ -105,7 +109,7 @@ export function parsePruneParams(body: unknown): Partial<PruneParamsBody> | null
     if (sel.allowProtected !== undefined && typeof sel.allowProtected !== "boolean") return null;
     const ops = [];
     for (const op of sel.ops) {
-      if (!isRecord(op) || typeof op.dimension !== "string" || !DIMENSION_RE.test(op.dimension)) return null;
+      if (!isRecord(op) || !validDimension(op.dimension)) return null;
       if (op.mode !== "add" && op.mode !== "remove") return null;
       if (![op.x1, op.z1, op.x2, op.z2].every(coord)) return null;
       ops.push({ dimension: op.dimension, mode: op.mode as "add" | "remove", x1: op.x1 as number, z1: op.z1 as number, x2: op.x2 as number, z2: op.z2 as number });
@@ -123,29 +127,31 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
       description: "What a scan uses when none are given. Defaults until saved.",
       tags: ["prune"],
       params: instanceParams(),
-      response: { 200: PruneParams, ...errors(404, 500, 501) },
+      response: { 200: PruneParams, ...errors(404, 429, 500, 501) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
-      try {
-        return await entry.getPruneSettings();
-      } catch (err) {
-        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
-        return internalError(reply, `prune/settings ${req.params.id}`, err);
-      }
+      return withSpawnReadCap(req.params.id, reply, async () => {
+        try {
+          return await entry.getPruneSettings();
+        } catch (err) {
+          if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+          return internalError(reply, `prune/settings ${req.params.id}`, err);
+        }
+      });
     },
   );
 
   app.put<{ Params: InstanceParams; Body: unknown }>(
     `${P}/prune/settings`,
-    { schema: {
+    { bodyLimit: PRUNE_BODY_LIMIT_BYTES, schema: {
       summary: "Save the chunk prune parameters",
       description: "Values are clamped to their limits by the setup suite; the reply is what was stored.",
       tags: ["prune"],
       params: instanceParams(),
       requestBody: { required: true, schema: PruneParamsRequest },
-      response: { 200: PruneParams, ...errors(400, 404, 500, 501) },
+      response: { 200: PruneParams, ...errors(400, 404, 413, 500, 501) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
@@ -171,17 +177,19 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
         "dimensions reads only those.",
       tags: ["prune"],
       params: instanceParams(),
-      response: { 200: PruneDimensions, ...errors(404, 500, 501) },
+      response: { 200: PruneDimensions, ...errors(404, 429, 500, 501) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
-      try {
-        return await entry.getPruneDimensions();
-      } catch (err) {
-        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
-        return internalError(reply, `prune/dimensions ${req.params.id}`, err);
-      }
+      return withSpawnReadCap(req.params.id, reply, async () => {
+        try {
+          return await entry.getPruneDimensions();
+        } catch (err) {
+          if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+          return internalError(reply, `prune/dimensions ${req.params.id}`, err);
+        }
+      });
     },
   );
 
@@ -194,17 +202,19 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
         "finished (the world may be half pruned; restore the job's backup).",
       tags: ["prune"],
       params: instanceParams(),
-      response: { 200: PruneEngineStatus, ...errors(404, 500, 501) },
+      response: { 200: PruneEngineStatus, ...errors(404, 429, 500, 501) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
-      try {
-        return await entry.getPruneStatus();
-      } catch (err) {
-        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
-        return internalError(reply, `prune/status ${req.params.id}`, err);
-      }
+      return withSpawnReadCap(req.params.id, reply, async () => {
+        try {
+          return await entry.getPruneStatus();
+        } catch (err) {
+          if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+          return internalError(reply, `prune/status ${req.params.id}`, err);
+        }
+      });
     },
   );
 
@@ -232,7 +242,7 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
 
   app.post<{ Params: InstanceParams; Body: unknown }>(
     `${P}/prune/scans`,
-    { schema: {
+    { bodyLimit: PRUNE_BODY_LIMIT_BYTES, schema: {
       summary: "Scan for unused chunks",
       description:
         "Reads every region file and stores a plan; changes nothing and is safe on " +
@@ -241,7 +251,7 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
       tags: ["prune"],
       params: instanceParams(),
       requestBody: { required: false, schema: PruneParamsRequest },
-      response: { 202: PruneScanStarted, ...errors(400, 404, 429, 500, 501) },
+      response: { 202: PruneScanStarted, ...errors(400, 404, 413, 429, 500, 501) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
@@ -299,7 +309,7 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
       }),
       requestHeaders: { "if-none-match": { description: "The ETag of a tile already held.", required: false } },
       produces: { 200: "image/png", 304: "image/png" },
-      response: { 200: { type: "string" }, 304: { type: "string" }, ...errors(400, 404, 500, 501) },
+      response: { 200: { type: "string" }, 304: { type: "string" }, ...errors(400, 404, 429, 500, 501) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
@@ -307,19 +317,21 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
       const { dimension } = req.params;
       const rx = Number(req.params.rx);
       const rz = Number(req.params.rz);
-      if (!DIMENSION_RE.test(dimension) || !Number.isInteger(rx) || !Number.isInteger(rz) || Math.abs(rx) > 100_000 || Math.abs(rz) > 100_000) {
+      if (!validDimension(dimension) || !Number.isInteger(rx) || !Number.isInteger(rz) || Math.abs(rx) > 100_000 || Math.abs(rz) > 100_000) {
         return reply.status(400).send({ error: "Invalid dimension or region" });
       }
-      try {
-        const tile = await entry.readPruneTile(dimension, rx, rz);
-        if (tile === null) return reply.status(404).send({ error: "No such region" });
-        reply.header("etag", tile.etag).header("cache-control", "private, max-age=0, must-revalidate");
-        if (req.headers["if-none-match"] === tile.etag) return reply.status(304).send();
-        return reply.type("image/png").send(tile.png);
-      } catch (err) {
-        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
-        return internalError(reply, `prune/tile ${req.params.id}`, err);
-      }
+      return withSpawnReadCap(req.params.id, reply, async () => {
+        try {
+          const tile = await entry.readPruneTile(dimension, rx, rz);
+          if (tile === null) return reply.status(404).send({ error: "No such region" });
+          reply.header("etag", tile.etag).header("cache-control", "private, max-age=0, must-revalidate");
+          if (req.headers["if-none-match"] === tile.etag) return reply.status(304).send();
+          return reply.type("image/png").send(tile.png);
+        } catch (err) {
+          if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+          return internalError(reply, `prune/tile ${req.params.id}`, err);
+        }
+      });
     },
   );
 
@@ -338,25 +350,27 @@ export function registerPruneRoutes(app: FastifyInstance, resolve: ResolveInstan
         cx: "Chunk x coordinate.",
         cz: "Chunk z coordinate.",
       }),
-      response: { 200: PruneChunkInfo, ...errors(400, 404, 500, 501) },
+      response: { 200: PruneChunkInfo, ...errors(400, 404, 429, 500, 501) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);
       if (!entry) return;
       const { dimension, cx, cz } = req.query;
       if (!PLAN_ID_RE.test(req.params.planId)) return reply.status(400).send({ error: "Invalid plan" });
-      if (typeof dimension !== "string" || !DIMENSION_RE.test(dimension)) return reply.status(400).send({ error: "Invalid dimension" });
+      if (!validDimension(dimension)) return reply.status(400).send({ error: "Invalid dimension" });
       const x = Number(cx);
       const z = Number(cz);
       if (!coord(x) || !coord(z)) return reply.status(400).send({ error: "Invalid chunk" });
-      try {
-        const info = await entry.inspectPruneChunk(req.params.planId, dimension, x, z);
-        if (info === null) return reply.status(404).send({ error: "Unknown or expired plan" });
-        return info;
-      } catch (err) {
-        if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
-        return internalError(reply, `prune/chunk ${req.params.id}`, err);
-      }
+      return withSpawnReadCap(req.params.id, reply, async () => {
+        try {
+          const info = await entry.inspectPruneChunk(req.params.planId, dimension, x, z);
+          if (info === null) return reply.status(404).send({ error: "Unknown or expired plan" });
+          return info;
+        } catch (err) {
+          if (err instanceof PruneUnavailableError) return reply.status(501).send({ error: err.message });
+          return internalError(reply, `prune/chunk ${req.params.id}`, err);
+        }
+      });
     },
   );
 

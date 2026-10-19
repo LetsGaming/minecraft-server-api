@@ -56,3 +56,15 @@ describe("throttled lines (W-020)", () => {
     expect(seen).toEqual([0]);
   });
 });
+
+describe.skipIf(process.platform === "win32")("log file permissions", () => {
+  it("creates the log readable by the wrapper user only", async () => {
+    const sub = path.join(dir, "nested");
+    process.env.MC_LOG_DIR = sub;
+    const { log, flushLog } = await import("../../src/platform/logger.js");
+    log.info("web", "private");
+    await flushLog();
+    expect(fs.statSync(sub).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(path.join(sub, "api-server.log")).mode & 0o777).toBe(0o600);
+  });
+});

@@ -11,10 +11,12 @@
 // The tarball holds what a host runs and nothing it builds from: no src/, no
 // tests, no dev tooling. The host runs `npm ci --omit=dev` against the lockfile.
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { staleDistReason } from "./lib/freshness.mjs";
+import { createTarGz } from "./lib/tar.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(ROOT, "release");
@@ -45,7 +47,8 @@ const { version } = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), 
 if (expected !== null && expected !== version) {
   fail(`the tag says ${expected} but package.json says ${version}; bump package.json first.`);
 }
-if (!fs.existsSync(path.join(ROOT, "dist", "index.js"))) fail("dist/index.js is missing; run npm run build first.");
+const staleReason = staleDistReason(ROOT);
+if (staleReason) fail(staleReason);
 
 /** The "## [<version>] - <date>" section of CHANGELOG.md, without its heading. */
 function changelogSection(v) {
@@ -69,8 +72,11 @@ for (const entry of SHIPPED) {
 }
 
 const tarball = path.join(OUT, `${name}.tar.gz`);
-// Fixed owner and mode bits, so the archive does not carry the builder's uid.
-execFileSync("tar", ["-czf", tarball, "--owner=0", "--group=0", "--numeric-owner", "-C", OUT, name], { stdio: "inherit" });
+// Written by lib/tar.mjs rather than the system tar: GNU tar, bsdtar and the
+// Windows tar disagree on the ownership flags, and this keeps root ownership
+// and the same bytes for the same inputs on every platform.
+const mtimeSeconds = Number(process.env.SOURCE_DATE_EPOCH) || Math.floor(Date.now() / 1000);
+createTarGz({ parent: OUT, name, outFile: tarball, mtimeSeconds });
 fs.rmSync(stage, { recursive: true, force: true });
 
 const sha = createHash("sha256").update(fs.readFileSync(tarball)).digest("hex");

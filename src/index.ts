@@ -3,8 +3,10 @@
  * graceful shutdown. App assembly lives in app.ts (testable).
  */
 import { loadConfig } from "./config/load.js";
+import { resolveTrustProxy } from "./config/trustProxy.js";
 import { buildApp } from "./http/app.js";
 import { log } from "./platform/logger.js";
+import { sweepOrphanedJobFiles } from "./platform/spawn.js";
 import { WRAPPER_VERSION } from "./contracts/version.js";
 
 // W-009: a stray rejection used to take the process down mid-job. Log it and
@@ -54,13 +56,22 @@ if (!config.API_KEY) {
   );
 }
 
+const trust = resolveTrustProxy(process.env.MC_TRUST_PROXY, BIND_HOST);
+if (trust.error) {
+  log.error("api-server", `FATAL: ${trust.error}`);
+  process.exit(1);
+}
+
 const { app, logStreamAPI } = await buildApp({
   config,
   allowNoAuth: ALLOW_NO_AUTH,
-  // SEC-03: only set this when the wrapper sits behind a reverse proxy
-  // that sets (not forwards) X-Forwarded-For — see README § Security.
-  trustProxy: process.env.MC_TRUST_PROXY === "true",
+  trustProxy: trust.trustProxy,
 });
+
+// After the instances have recovered their job records, which name the only
+// output files still worth keeping.
+const swept = sweepOrphanedJobFiles();
+if (swept > 0) log.info("api-server", `Removed ${swept} job output file(s) left by an earlier run`);
 
 const instanceList = Object.keys(config.instances).join(", ");
 

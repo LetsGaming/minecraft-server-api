@@ -32,6 +32,8 @@ import {
 const JOB_ID_RE = /^[a-f0-9-]{36}$/;
 export const PLAN_ID_RE = /^[a-f0-9]{16}$/;
 const MAX_EXPECTED_MODS = 500;
+/** 500 names of up to 96 characters, quoted and comma-separated, plus the other fields. */
+const UPGRADE_BODY_LIMIT_BYTES = 64 * 1024;
 // Names come back from the compatibility check as it reported them, including ones it could not
 // look up (a mod id like "sit!"), so this only rules out what would break the comma-joined argument.
 const EXPECTED_NAME_RE = /^[^\s,\u0000-\u001f]{1,96}$/;
@@ -51,7 +53,7 @@ export function registerOperationRoutes(
     Body: { mcVersion?: unknown; expectUnavailable?: unknown; countdownSeconds?: unknown; prunePlan?: unknown };
   }>(
     `${P}/operations/upgrade`,
-    { schema: {
+    { bodyLimit: UPGRADE_BODY_LIMIT_BYTES, schema: {
       summary: "Start a Minecraft version upgrade",
       description:
         "Runs the suite's upgrade job in the background: players are warned, " +
@@ -63,7 +65,7 @@ export function registerOperationRoutes(
       tags: ["operations"],
       params: instanceParams(),
       requestBody: { required: true, schema: UpgradeRequest },
-      response: { 202: UpgradeStarted, ...errors(400, 404, 423, 500, 501) },
+      response: { 202: UpgradeStarted, ...errors(400, 404, 413, 423, 500, 501) },
     } },
     async (req, reply) => {
       const entry = resolve(req.params.id, reply);

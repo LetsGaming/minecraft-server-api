@@ -5,12 +5,31 @@
  * a request path, so both are memoised behind the same short TTL. A world
  * switch is picked up within a minute without a restart.
  */
-import fsp from "fs/promises";
 import path from "path";
 
 import type { InstanceConfig } from "../config/types.js";
+import { log } from "../platform/logger.js";
+import { readFileNoFollow } from "../platform/safeFs.js";
+import { parseJavaProperties } from "./configSecrets.js";
 
 const PROPERTIES_TTL_MS = 60_000;
+const PROPERTIES_MAX_BYTES = 1024 * 1024;
+const DEFAULT_LEVEL_NAME = "world";
+
+/**
+ * A level name is one directory name below the server directory. Anything
+ * with a separator, a dot segment or a NUL could point the stats and world
+ * readers somewhere else.
+ */
+export function isSafeLevelName(name: string): boolean {
+  return (
+    name !== "" &&
+    name !== "." &&
+    name !== ".." &&
+    !/[/\\\0]/.test(name) &&
+    !/^[A-Za-z]:/.test(name)
+  );
+}
 
 export interface World {
   getLevelName(): Promise<string>;
@@ -23,17 +42,28 @@ export function createWorld(cfg: InstanceConfig): World {
   let gamePortCache: number | null | undefined = undefined;
   let gamePortAt = 0;
 
+async function readProperties(): Promise<Map<string, string>> {
+  const raw = await readFileNoFollow(
+    path.join(cfg.serverPath, "server.properties"),
+    PROPERTIES_MAX_BYTES,
+  );
+  return parseJavaProperties(raw.toString("utf-8"));
+}
+
 async function getLevelName(): Promise<string> {
   if (levelNameCache && Date.now() - levelNameCachedAt < PROPERTIES_TTL_MS) {
     return levelNameCache;
   }
-  const propsPath = path.join(cfg.serverPath, "server.properties");
   try {
-    const text = await fsp.readFile(propsPath, "utf-8");
-    const m = /^level-name\s*=\s*(.+)$/m.exec(text);
-    levelNameCache = m?.[1]?.trim() ?? "world";
+    const name = ((await readProperties()).get("level-name") ?? DEFAULT_LEVEL_NAME).trim();
+    if (isSafeLevelName(name)) {
+      levelNameCache = name;
+    } else {
+      log.warn("world", `[${cfg.id}] Ignoring unsafe level-name in server.properties`);
+      levelNameCache = DEFAULT_LEVEL_NAME;
+    }
   } catch {
-    levelNameCache = "world";
+    levelNameCache = DEFAULT_LEVEL_NAME;
   }
   levelNameCachedAt = Date.now();
   return levelNameCache;
@@ -43,7 +73,7 @@ async function getLevelName(): Promise<string> {
  * `server-port` from server.properties, cached like the level name.
  *
  * Reported on /health so a client knows where to ping the game server
- * directly — which matters exactly when this wrapper is unreachable and
+ * directly, which matters exactly when this wrapper is unreachable and
  * cannot be asked.
  */
 async function getGamePort(): Promise<number | null> {
@@ -51,12 +81,8 @@ async function getGamePort(): Promise<number | null> {
     return gamePortCache;
   }
   try {
-    const text = await fsp.readFile(
-      path.join(cfg.serverPath, "server.properties"),
-      "utf-8",
-    );
-    const m = /^server-port\s*=\s*(\d{1,5})\s*$/m.exec(text);
-    const port = m?.[1] ? Number(m[1]) : NaN;
+    const raw = (await readProperties()).get("server-port")?.trim() ?? "";
+    const port = /^\d{1,5}$/.test(raw) ? Number(raw) : NaN;
     gamePortCache = Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
   } catch {
     gamePortCache = null;

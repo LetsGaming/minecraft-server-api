@@ -175,7 +175,7 @@ export function registerConfigFileRoutes(
         "if-match": { description: "The etag of the version being replaced.", required: true },
       },
       requestBody: { required: true, schema: ConfigRevertRequest },
-      response: { 200: ConfigFileReverted, ...errors(400, 403, 404, 412, 428, 500) },
+      response: { 200: ConfigFileReverted, ...errors(400, 403, 404, 412, 413, 428, 500) },
     } }, async (req, reply) => {
     const entry = resolve(req.params.id, reply);
     if (!entry) return;
@@ -203,6 +203,9 @@ export function registerConfigFileRoutes(
       if (!result.ok) {
         if (result.reason === "conflict") {
           return reply.status(412).send({ error: "The file changed since you loaded it" });
+        }
+        if (result.reason === "too-large") {
+          return reply.status(413).send({ error: "Config file is too large" });
         }
         if (result.reason === "protected") {
           return reply.status(403).send({ error: protectedError(result.keys) });

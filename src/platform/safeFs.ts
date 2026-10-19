@@ -68,8 +68,8 @@ export async function tailNoFollow(
     const { size } = await fh.stat();
     const length = Math.min(size, maxBytes);
     const buf = Buffer.alloc(length);
-    await fh.read(buf, 0, length, size - length);
-    let text = buf.toString("utf-8");
+    const { bytesRead } = await fh.read(buf, 0, length, size - length);
+    let text = buf.subarray(0, bytesRead).toString("utf-8");
     // A read that started mid-file starts mid-line; drop that partial line.
     if (length < size) text = text.slice(text.indexOf("\n") + 1);
     const all = text.split("\n");

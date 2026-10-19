@@ -10,6 +10,7 @@ import fsp from "fs/promises";
 import path from "path";
 import type { ServerResponse } from "http";
 import type { InstanceConfig } from "../config/types.js";
+import { isInside } from "./safeFs.js";
 
 // A-05: cap how many bytes we read per polling cycle. If the server was
 // offline while the api-server restarted (lastSize = 0) and the log is
@@ -40,6 +41,19 @@ async function readWindow(file: string, start: number, length: number): Promise<
     return buf.subarray(0, bytesRead);
   } finally {
     await handle.close();
+  }
+}
+
+/** The instance user owns `logs/`; a link swapped in for it must not redirect the tail. */
+async function logsDirContained(serverPath: string): Promise<boolean> {
+  try {
+    const [dir, server] = await Promise.all([
+      fsp.realpath(path.join(serverPath, "logs")),
+      fsp.realpath(serverPath),
+    ]);
+    return isInside(dir, server);
+  } catch {
+    return false;
   }
 }
 
@@ -80,6 +94,8 @@ export function initLogStream(
 
     // Seed the read offset so we don't replay the entire log on first connect
     try {
+      const realLogs = fs.realpathSync(path.join(cfg.serverPath, "logs"));
+      if (!isInside(realLogs, fs.realpathSync(cfg.serverPath))) throw new Error("outside");
       const seed = fs.statSync(logFilePath);
       state.lastSize = seed.size;
       state.ino = seed.ino;
@@ -104,6 +120,7 @@ export function initLogStream(
       }
       state.reading = true;
       try {
+        if (!(await logsDirContained(cfg.serverPath))) return;
         if (event === "rename") {
           try {
             await fsp.access(logFilePath);

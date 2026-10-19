@@ -18,9 +18,11 @@ import { log } from "../platform/logger.js";
 import {
   interpreter,
   jobStateDir,
+  procIdentity,
   processGroupAlive,
   spawnJobAsInstanceUser,
   type JobSpawnHandle,
+  type ProcessIdentity,
 } from "../platform/spawn.js";
 import type { InstanceConfig } from "../config/types.js";
 import type { UpgradeEvent, UpgradeJob, UpgradeResult } from "../contracts/wire.js";
@@ -34,6 +36,8 @@ const STATUS_FILE = path.join("common", "upgrade-status.ndjson");
  * possible restore. A job that outlives this is wedged, not slow.
  */
 export const UPGRADE_TIMEOUT_MS = 90 * 60_000;
+/** After the timeout, how long a recovered job gets to exit before its slot is released regardless. */
+export const RECOVERED_KILL_GRACE_MS = 20_000;
 export const UPGRADE_MAX_EVENTS = 500;
 export const UPGRADE_JOBS_KEPT = 5;
 export const UPGRADE_JOB_RETENTION_MS = 6 * 60 * 60_000;
@@ -89,6 +93,10 @@ export interface UpgradeDeps {
   recordDir?: string;
   /** Liveness of a recorded job's process group. */
   isAlive?: (pgid: number) => boolean;
+  /** Boot id and process start time, to tell the recorded process from a later one with the same pid. */
+  identity?: ProcessIdentity;
+  /** Signal a recorded job's process group (the timeout on a recovered job). */
+  signalGroup?: (pgid: number, signal: NodeJS.Signals) => void;
   /** How often a job recovered after a restart is checked for having ended. */
   recoveryPollMs?: number;
 }
@@ -102,6 +110,10 @@ export interface UpgradeDeps {
  */
 interface JobRecord {
   pgid: number;
+  /** The kernel's id of the boot the job started in; a record from an earlier boot is never alive. */
+  bootId?: string | null;
+  /** Start time of the process at `pgid` (clock ticks since boot), to rule out a reused pid. */
+  procStart?: string | null;
   jobId: string;
   kind: "upgrade" | "prune";
   mcVersion: string;
@@ -113,6 +125,8 @@ function isJobRecord(v: unknown): v is JobRecord {
   return (
     isRecord(v) &&
     typeof v.pgid === "number" &&
+    (v.bootId === undefined || v.bootId === null || typeof v.bootId === "string") &&
+    (v.procStart === undefined || v.procStart === null || typeof v.procStart === "string") &&
     typeof v.jobId === "string" &&
     (v.kind === "upgrade" || v.kind === "prune") &&
     typeof v.mcVersion === "string" &&
@@ -123,6 +137,15 @@ function isJobRecord(v: unknown): v is JobRecord {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const EVENT_STATUSES: readonly UpgradeEvent["status"][] = ["running", "done", "error", "info"];
+const EVENT_PHASE_MAX = 64;
+const EVENT_MSG_MAX = 2000;
+
+function eventStatus(value: unknown): UpgradeEvent["status"] {
+  if (value === undefined) return "running";
+  return EVENT_STATUSES.find((s) => s === value) ?? "info";
 }
 
 /** One NDJSON line from the script to either a progress event or the result; null for anything else. */
@@ -148,9 +171,9 @@ export function parseUpgradeLine(
       event: {
         seq: obj.seq,
         ts: typeof obj.ts === "number" ? obj.ts : 0,
-        phase: obj.phase,
-        status: typeof obj.status === "string" ? obj.status : "running",
-        msg: typeof obj.msg === "string" ? obj.msg : "",
+        phase: obj.phase.slice(0, EVENT_PHASE_MAX),
+        status: eventStatus(obj.status),
+        msg: typeof obj.msg === "string" ? obj.msg.slice(0, EVENT_MSG_MAX) : "",
       },
     };
   }
@@ -165,6 +188,16 @@ export function createUpgrades(
   const spawnJob = deps.spawnJob ?? spawnJobAsInstanceUser;
   const now = deps.now ?? Date.now;
   const isAlive = deps.isAlive ?? processGroupAlive;
+  const identity = deps.identity ?? procIdentity();
+  const signalGroup =
+    deps.signalGroup ??
+    ((pgid: number, signal: NodeJS.Signals): void => {
+      try {
+        process.kill(-pgid, signal);
+      } catch {
+        /* not ours to signal, or already gone */
+      }
+    });
   const jobs = new Map<string, Job>();
   const recordPath = path.join(deps.recordDir ?? jobStateDir(), `${cfg.id}.upgrade.json`);
 
@@ -187,6 +220,23 @@ export function createUpgrades(
     }
   }
 
+  /**
+   * Is the process this record names still the job? EPERM from kill(2) only
+   * says some process owned by someone else has that group id, which after a
+   * reboot (or a pid reuse) is a stranger, so the boot id and the start time
+   * recorded at spawn have to agree as well.
+   */
+  function isTheJob(record: JobRecord): boolean {
+    if (!isAlive(record.pgid)) return false;
+    const boot = identity.bootId();
+    if (record.bootId && boot && record.bootId !== boot) return false;
+    if (record.procStart) {
+      const start = identity.startTime(record.pgid);
+      if (start !== null && start !== record.procStart) return false;
+    }
+    return true;
+  }
+
   /** A job a previous wrapper process started that is still running. */
   let recovered: JobRecord | null = null;
 
@@ -197,18 +247,38 @@ export function createUpgrades(
     } catch {
       return; // no record: nothing was running
     }
-    if (!isJobRecord(record) || !isAlive(record.pgid)) {
+    if (!isJobRecord(record) || !isTheJob(record)) {
       removeRecord(isJobRecord(record) ? record.files : []);
+      return;
+    }
+    const expired = (r: JobRecord): boolean => now() - r.startedAt > UPGRADE_TIMEOUT_MS;
+    if (expired(record)) {
+      log.warn("upgrade", `${cfg.id}: ${record.kind} job ${record.jobId} outlived its time limit; stopping it`);
+      signalGroup(record.pgid, "SIGTERM");
+      const pgid = record.pgid;
+      setTimeout(() => signalGroup(pgid, "SIGKILL"), RECOVERED_KILL_GRACE_MS).unref();
+      removeRecord(record.files);
       return;
     }
     const release = slot.begin(record.kind, record.jobId);
     if (!release) return;
     recovered = record;
     log.info("upgrade", `${cfg.id}: ${record.kind} job ${record.jobId} still running after a restart`);
+    let terminating = false;
     const timer = setInterval(() => {
-      if (recovered && isAlive(recovered.pgid)) return;
+      const job = recovered;
+      if (job === null) return;
+      const overdue = expired(job);
+      if (overdue && !terminating) {
+        terminating = true;
+        log.warn("upgrade", `${cfg.id}: ${job.kind} job ${job.jobId} outlived its time limit; stopping it`);
+        signalGroup(job.pgid, "SIGTERM");
+        setTimeout(() => signalGroup(job.pgid, "SIGKILL"), RECOVERED_KILL_GRACE_MS).unref();
+      }
+      const gaveUp = overdue && now() - job.startedAt > UPGRADE_TIMEOUT_MS + 2 * RECOVERED_KILL_GRACE_MS;
+      if (isTheJob(job) && !gaveUp) return;
       clearInterval(timer);
-      removeRecord(recovered?.files);
+      removeRecord(job.files);
       recovered = null;
       release();
     }, deps.recoveryPollMs ?? 5_000);
@@ -306,6 +376,8 @@ export function createUpgrades(
       if (handle.pid !== undefined) {
         writeRecord({
           pgid: handle.pid,
+          bootId: identity.bootId(),
+          procStart: identity.startTime(handle.pid),
           jobId,
           kind,
           mcVersion: job.mcVersion,
