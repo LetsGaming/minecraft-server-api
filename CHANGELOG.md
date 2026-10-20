@@ -14,6 +14,8 @@ unchanged.
 
 ## [Unreleased]
 
+## [4.3.2] - 2026-10-20
+
 ### Changed
 
 - The "no API key configured" startup error now names the setting for the config mode in use instead of always suggesting an environment variable.
