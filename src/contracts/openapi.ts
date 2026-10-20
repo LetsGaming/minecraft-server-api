@@ -46,8 +46,9 @@ const INFO_DESCRIPTION = [
   "Generated from the router by `npm run openapi:generate`. Do not edit by hand.",
   "",
   "Every route except `GET /health` requires the `x-api-key` header. Every",
-  'non-2xx body is `{ "error": "<message>" }`. Clients negotiate by the',
-  "feature names and versions in `GET /manifest`, not by wrapper version.",
+  'non-2xx body carries `error` (`{ "error": "<message>" }`); a 423 also',
+  "carries `busy`. Clients negotiate by the feature names and versions in",
+  "`GET /manifest`, not by wrapper version.",
 ].join("\n");
 
 export function buildOpenApi(

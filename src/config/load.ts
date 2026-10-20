@@ -217,6 +217,14 @@ function singleInstanceFromVars(vars: Record<string, string>): AppConfig {
   };
 }
 
+/** Names the setting that supplies the API key in the config mode this process resolves to. */
+export function apiKeySettingHint(): string {
+  const configFile = process.env.CONFIG_FILE ?? DEFAULT_CONFIG_FILE;
+  return fs.existsSync(configFile)
+    ? `"apiKey" in ${configFile}`
+    : "API_SERVER_KEY in variables.txt or the environment";
+}
+
 export function loadConfig(): AppConfig {
   const configFile = process.env.CONFIG_FILE ?? DEFAULT_CONFIG_FILE;
 

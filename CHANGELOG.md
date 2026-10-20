@@ -14,6 +14,15 @@ unchanged.
 
 ## [Unreleased]
 
+### Changed
+
+- The "no API key configured" startup error now names the setting for the config mode in use instead of always suggesting an environment variable.
+- The OpenAPI description documents that every error body has `error` and that 423 responses also carry `busy`; the example config files describe the API key, instance name and `MC_LOG_DIR` settings correctly.
+
+### Fixed
+
+- `/health` and `/metrics` keep their public and unthrottled status when a client appends a query string such as `/health?probe=1`.
+
 ## [4.3.0] - 2026-10-18
 
 ### Security

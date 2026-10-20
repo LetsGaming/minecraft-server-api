@@ -27,7 +27,7 @@ The last line is the backup restore route. It is not a `scripts/run`
 action: the archive path is one the wrapper resolved from its own backup
 listing, never one a client sent.
 
-The version upgrade, chunk prune and health routes add three more shapes:
+The version upgrade, chunk prune and health routes add these shapes:
 
 ```
 sudo -n -u minecraft bash /opt/minecraft/scripts/survival/update/upgrade.sh <mcVersion> [--prune-plan=<id>] [--expect-unavailable=<slugs>] [--countdown=<seconds>]
@@ -54,7 +54,7 @@ sudo -n -u minecraft node /opt/minecraft/scripts/survival/update/toggle-mod.js -
 ```
 
 Those are all of the wrapper's sudo calls. Host metrics (`/info`) use plain
-`ps` and `df`, which need no privileges.
+`ps`, `df` and `du`, which need no privileges.
 
 A job started with a time limit (upgrade, prune, restore, scripts) is stopped
 at the limit by signalling the process group of the `sudo` process the

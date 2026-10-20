@@ -119,6 +119,7 @@ The file is looked up at `./api-server-config.json` next to `index.js`, or where
 | `MC_SSE_MAX_CLIENTS` | both modes | Max concurrent `/logs/stream` clients per instance (default `50`) |
 | `MC_ALLOW_NO_AUTH` | both modes | `true` = keyless **loopback-only** dev mode; see [Security](#security) |
 | `MC_DEBUG` | both modes | `true` = debug log lines |
+| `MC_LOG_DIR` | both modes | Directory for the wrapper's log files (default `./logs` of the working directory). Set to an empty string to turn file logging off |
 | `SERVER_PATH` | fallback mode | **Required** — absolute path to the Minecraft server directory |
 | `INSTANCE_NAME` | fallback mode | Instance id / screen session name (default `server`) |
 | `API_SERVER_PORT` | fallback mode | Port (default `3000`) |
@@ -139,13 +140,13 @@ See [`variables.example.txt`](./variables.example.txt) for all keys. The file is
 
 ## Security
 
-- **The API key must be at least 32 characters** (`openssl rand -hex 32`); the wrapper refuses to start with a shorter one. `linuxUser` must be a valid Linux user name (`^[a-z_][a-z0-9_-]{0,31}$`) because it is passed to `sudo -u`, and a bad value stops startup with a message naming the instance.
+- **The API key must be at least 32 characters** (`openssl rand -hex 32`); the wrapper refuses to start with a shorter one, with one that starts or ends with whitespace, or with one of fewer than 8 distinct characters. `linuxUser` must be a valid Linux user name (`^[a-z_][a-z0-9_-]{0,31}$`) because it is passed to `sudo -u`, and a bad value stops startup with a message naming the instance.
 - **Scripts run with a minimal environment.** The `sudo` child inherits only `PATH`, locale and terminal variables plus `HOME`, never `MC_API_KEY` or `RCON_PASSWORD_*`. A script that outlives its timeout gets `SIGTERM`, then `SIGKILL` ten seconds later.
 - **The wrapper refuses to start without an API key** (it can start/stop servers and run arbitrary console commands — keyless would mean unauthenticated remote control). For a local dev instance, `MC_ALLOW_NO_AUTH=true` disables auth **and forces binding to 127.0.0.1**.
-- API-key comparison is constant-time; failed authentications are limited to 20 per IP per 15 minutes. Reads are limited to 100 per minute per IP. Writes are limited to 10 per minute per IP and the budget is charged only after the request authenticated, so unauthenticated traffic from a shared address cannot drain it.
+- API-key comparison is constant-time; failed authentications are limited to 20 per IP per 15 minutes. Every request counts against a general budget of 100 per minute per IP (`/health` and `/metrics` are exempt), authenticated or not. Mutating requests (anything other than `GET`) are additionally limited to 10 per minute per IP, and the budget is charged only after the request authenticated, so unauthenticated traffic from a shared address cannot drain it.
 - **Behind a reverse proxy, set `MC_TRUST_PROXY`** (`true` with a loopback bind, or the proxy's address or CIDR when it runs elsewhere; `true` on a non-loopback bind is refused at startup) so the rate limiters see the real client IP from `X-Forwarded-For`. Without it every request carries the proxy's IP. One attacker's failed keys would lock out *all* clients, and per-attacker throttling is meaningless. Only enable it when the proxy **sets** (never merely forwards) the header; a spoofable header lets clients rotate limiter buckets at will. Default `false` is correct for direct binds.
 - SSE log streams are capped at 50 concurrent clients per instance (`MC_SSE_MAX_CLIENTS` to adjust); requests beyond the cap receive 503. More than 32 requests in flight at once (other than `/health` and `/metrics`) also get a fast 503 with `Retry-After`. Slow SSE consumers are skipped while their socket is backpressured instead of buffering unboundedly.
-- Request bodies are capped at 4 KB, except `PUT /instances/:id/configs/:fileId`, which accepts about twice the 1 MB config cap. Console commands are limited to 1400 bytes and rejected with `400` when they contain control characters (the `screen` fallback strips them again as a second guard). Script arguments (at most 5, each `[\w.@-]{1,128}`), mod slugs and stats UUIDs go through strict allowlists.
+- Request bodies are capped at 4 KB, except `PUT /instances/:id/configs/:fileId` (about twice the 1 MB config cap), the upgrade start (64 KB) and the prune scan and settings routes (512 KB). Console commands are limited to 1400 bytes and rejected with `400` when they contain control characters (the `screen` fallback strips them again as a second guard). Script arguments (at most 5, each `[\w.@-]{1,128}`), mod slugs and stats UUIDs go through strict allowlists.
 - Wrapper log lines escape control, separator and bidi characters and are length-capped, so text from a script or a player cannot forge a log line.
 - `500` responses carry a fixed `{ "error": "Internal server error" }` body; failure detail (paths, stderr) goes to the wrapper log only.
 - **No route accepts a filesystem path.** Backup archives are addressed by an opaque `id` handed out by `/backups/files`, which the wrapper resolves against a listing it builds itself — so the path handed to a download or a restore script is always one this process chose, never one a client described. Traversal is not defended against here; it is unrepresentable. A `realpath` containment check sits behind that for the symlink case a `startsWith` guard cannot see.
@@ -159,12 +160,13 @@ See [`variables.example.txt`](./variables.example.txt) for all keys. The file is
 
 ## API Reference
 
-All routes except `GET /health` require the `x-api-key` header. Error bodies are always `{ "error": "<message>" }`. Full request and response schemas: [`openapi.json`](./openapi.json), generated by `npm run openapi:generate` and never edited by hand.
+All routes except `GET /health` require the `x-api-key` header. Error bodies always carry `{ "error": "<message>" }`; a `423` (instance busy with another operation) adds a `busy` object. Full request and response schemas: [`openapi.json`](./openapi.json), generated by `npm run openapi:generate` and never edited by hand.
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Liveness + wrapper version (public) |
 | `GET` | `/manifest` | **What this wrapper can do** — routes, features, script actions; generated from the router |
+| `GET` | `/metrics` | Request counters, timings and cache statistics (authenticated; exempt from the rate limits and the in-flight cap) |
 | `GET` | `/instances` | Configured instance ids |
 | `GET` | `/instances/:id/info` | **Wrapper version + host metrics** (server process RAM/CPU, disk usage) — the bot's startup handshake |
 | `GET` | `/instances/:id/health` | **Three-state health** (`online`, `unresponsive`, `offline`) plus systemd restart-loop signals |
@@ -195,6 +197,20 @@ All routes except `GET /health` require the `x-api-key` header. Error bodies are
 | `GET` | `/instances/:id/backups/files/:fileId/download` | **Download one archive** — streamed, `Content-Length` set, `Range` supported |
 | `POST` | `/instances/:id/backups/files/:fileId/restore` | **Restore the world** from one archive (destructive). Returns `409` unless the server is `offline` |
 | `GET` | `/instances/:id/capabilities` | Which setup-suite artifacts exist |
+| `GET` | `/instances/:id/events` | Server lifecycle events `start.sh` recorded (JVM started and exited, restart scheduled, crash loop gave up); byte-offset cursor via `since` |
+| `POST` | `/instances/:id/operations/upgrade` | Start a Minecraft version upgrade as a background job (`202`; warns players, stops and backs up the server, installs, restarts, restores its own backup if the server does not come up). `423` while anything else holds the instance |
+| `GET` | `/instances/:id/operations/upgrade/current` | The running or most recent upgrade job (`404` when there has been none) |
+| `GET` | `/instances/:id/operations/upgrade/:jobId` | Progress and result of an upgrade or prune-apply job (finished jobs are kept for a few hours, the last five) |
+| `POST` | `/instances/:id/operations/prune` | Delete the chunks a scan found, as a background job (`202`, polled through the upgrade job route; `423` while anything else holds the instance) |
+| `GET` | `/instances/:id/prune/status` | Prune engine version and `unfinishedApply` |
+| `GET` | `/instances/:id/prune/dimensions` | Dimensions of the world with region-file counts |
+| `GET` / `PUT` | `/instances/:id/prune/settings` | Read or save the chunk prune parameters |
+| `POST` | `/instances/:id/prune/scans` | Start a read-only scan for unused chunks (`202`; one scan at a time) |
+| `GET` | `/instances/:id/prune/scans/:jobId` | Progress and result of a scan |
+| `POST` | `/instances/:id/prune/scans/:jobId/cancel` | Stop a running scan |
+| `GET` | `/instances/:id/prune/plans/:planId/map/:index` | Per-chunk class and heat map of one dimension of a scan |
+| `GET` | `/instances/:id/prune/plans/:planId/chunk` | One chunk of a plan in full, for the map inspector |
+| `GET` | `/instances/:id/prune/tiles/:dimension/:rx/:rz` | A region drawn from above as a 512 x 512 PNG (`If-None-Match` supported) |
 | `GET` | `/instances/:id/logs/tail?lines=N` | Last N lines of `latest.log` (1–500) |
 | `GET` | `/instances/:id/logs/stream` | SSE stream of new log lines |
 | `GET` | `/instances/:id/stats` | Player UUIDs with stats files (resolves `<level>/stats` or `<level>/players/stats`) |

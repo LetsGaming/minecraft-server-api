@@ -427,3 +427,15 @@ describe("keyMatches", () => {
     expect(keyMatches(KEY + "z", KEY)).toBe(false);
   });
 });
+
+describe("public path matching", () => {
+  it("serves GET /health without a key when a query string is present", async () => {
+    const res = await app.inject({ url: "/health?probe=1" });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("keeps /health/x behind auth", async () => {
+    const res = await app.inject({ url: "/health/x" });
+    expect(res.statusCode).toBe(401);
+  });
+});

@@ -10,6 +10,7 @@ import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 
 import { registerAuth } from "./auth.js";
+import { isUnthrottledPath } from "./publicPaths.js";
 import { registerHealthRoute, registerManifestRoute, registerMetricsRoute } from "./routes/meta.js";
 import { registerInstanceRoutes } from "./routes/instance/index.js";
 import { WriteRateLimiter } from "./writeRateLimit.js";
@@ -162,7 +163,7 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
   // A cap the process can actually serve, rather than accepting work it
   // cannot finish in time and having every caller time out anyway.
   app.addHook("onRequest", async (req, reply) => {
-    if (req.url === "/health" || req.url === "/metrics") return;
+    if (isUnthrottledPath(req.url)) return;
     if (getInFlight() > MAX_IN_FLIGHT) {
       void reply.header("Retry-After", "1");
       return reply.status(503).send({ error: "Too many concurrent requests" });
@@ -175,7 +176,7 @@ export async function buildApp(opts: BuildOptions): Promise<BuiltApp> {
   await app.register(rateLimit, {
     max: GLOBAL_RATE_LIMIT_MAX,
     timeWindow: GLOBAL_RATE_LIMIT_WINDOW_MS,
-    allowList: (req) => req.url === "/health" || req.url === "/metrics",
+    allowList: (req) => isUnthrottledPath(req.url),
     errorResponseBuilder: (_req, ctx) => {
       recordRateLimitRejection();
       // W-020: a flood would otherwise log one line per rejected request.

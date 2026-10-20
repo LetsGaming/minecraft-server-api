@@ -8,6 +8,8 @@
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
 
+import { isPublicPath } from "./publicPaths.js";
+
 import type { AppConfig } from "../config/types.js";
 
 // The global limiter throttles overall traffic; this one specifically
@@ -100,7 +102,7 @@ export function registerAuth(
   const authFails = new AuthFailTracker();
 
   app.addHook("onRequest", async (req, reply) => {
-    if (req.url === "/health") return;
+    if (isPublicPath(req.url)) return;
 
     // SEC-01: only bypass auth in the explicit, loopback-bound no-auth
     // dev mode. In every other case a key exists (enforced at startup).

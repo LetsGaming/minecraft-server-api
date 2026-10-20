@@ -18,7 +18,8 @@
 # Environment variables take precedence over values in this file.
 #
 # Keys marked [required] must be supplied (via file or env var) for the
-# server to start.
+# server to start. The API key (API_SERVER_KEY) is required too: the wrapper
+# refuses to start without one.
 
 # ── Required ──────────────────────────────────────────────────────────────────
 
@@ -26,8 +27,10 @@
 # Must contain server.properties, whitelist.json, and logs/latest.log.
 SERVER_PATH="/opt/minecraft/survival"
 
-# [required] Identifier for this instance. Used as the screen session name,
-# PM2 process name, and the :id segment in API paths (/instances/:id/...).
+# Identifier for this instance. Optional, default "server". Used as the screen
+# session name and the :id segment in API paths (/instances/:id/...). The PM2
+# process name (<id>-api) uses it only when INSTANCE_NAME is set as an
+# environment variable.
 INSTANCE_NAME="survival"
 
 # ── Network ───────────────────────────────────────────────────────────────────
@@ -35,9 +38,12 @@ INSTANCE_NAME="survival"
 # Port the API server listens on.
 API_SERVER_PORT="3000"
 
-# Shared secret for the x-api-key header. All routes except GET /health
-# require this header. Leave empty to disable authentication entirely —
-# not recommended for internet-facing deployments.
+# [required] Shared secret for the x-api-key header. All routes except
+# GET /health require this header. The wrapper refuses to start without a key:
+# at least 32 characters, no leading or trailing whitespace, at least 8
+# distinct characters (generate one with: openssl rand -hex 32).
+# For keyless, loopback-only local dev only, leave it empty and set the env var
+# MC_ALLOW_NO_AUTH=true. Never in production.
 API_SERVER_KEY="replace-with-a-long-random-secret"
 
 # ── Linux user ────────────────────────────────────────────────────────────────

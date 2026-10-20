@@ -108,3 +108,11 @@ describe("openapi.json", () => {
     }
   });
 });
+
+describe("openapi.json info", () => {
+  it("states that every non-2xx body has `error` and a 423 also carries `busy`", () => {
+    const description = (JSON.parse(rendered) as { info: { description: string } }).info.description;
+    expect(description).toMatch(/non-2xx body carries `error`/);
+    expect(description).toMatch(/423 also\s+carries `busy`/);
+  });
+});

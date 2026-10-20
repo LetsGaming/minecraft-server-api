@@ -2,7 +2,7 @@
  * Entry point: config resolution, SEC-01 fail-closed key check, listen,
  * graceful shutdown. App assembly lives in app.ts (testable).
  */
-import { loadConfig } from "./config/load.js";
+import { apiKeySettingHint, loadConfig } from "./config/load.js";
 import { resolveTrustProxy } from "./config/trustProxy.js";
 import { buildApp } from "./http/app.js";
 import { log } from "./platform/logger.js";
@@ -43,7 +43,7 @@ if (!config.API_KEY) {
     log.error(
       "api-server",
       "FATAL: no API key configured.\n" +
-        "  Set apiKey in api-server-config.json, or the MC_API_KEY / API_SERVER_KEY env var.\n" +
+        `  Set ${apiKeySettingHint()}, or the MC_API_KEY env var (overrides either).\n` +
         "  Refusing to start an unauthenticated server-control API.\n" +
         "  For a loopback-only keyless dev instance, set MC_ALLOW_NO_AUTH=true.",
     );
