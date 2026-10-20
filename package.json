@@ -18,7 +18,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "update": "node scripts/update-deps.mjs",
-    "pack:release": "node scripts/pack-release.mjs"
+    "pack:release": "node scripts/pack-release.mjs",
+    "bump-version": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@fastify/rate-limit": "^10.3.0",

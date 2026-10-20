@@ -263,8 +263,14 @@ npm run openapi:check      # fail when the committed openapi.json is stale
 
 ### Releasing
 
-1. Move the `[Unreleased]` entries in `CHANGELOG.md` under `## [<version>] - <date>` and set `version` in `package.json` (and the lockfile: `npm install --package-lock-only`).
-2. Merge, then tag that commit: `git tag v<version> && git push origin v<version>`.
+From a clean `main` with the release notes under `## [Unreleased]` in `CHANGELOG.md`:
+
+```bash
+npm run bump-version -- patch --dry-run   # or minor, major, or an explicit x.y.z
+npm run bump-version -- patch --push
+```
+
+The script updates `package.json`, `package-lock.json`, the `v=` line above, `CHANGELOG.md` (the `[Unreleased]` entries move under `## [<version>] - <date>`) and `openapi.json`, dry-runs `npm run pack:release` against the new version, commits `chore: release <version>`, tags `v<version>` and pushes `main` and the tag. Without `--push` it stops after the local commit and tag (`--tag`) or after the file edits. `--retag` replaces a tag that already exists, for example after a release that failed before it published. Run `node scripts/bump-version.mjs` without arguments for all flags.
 
 `.github/workflows/release.yml` runs the checks, packs `mc-api-server-<version>.tar.gz` with `npm run pack:release` (built `dist/` and what a host runs, no sources) and publishes it with its `.sha256` as a GitHub Release, with the changelog section as notes. With the `SETUP_REPO_TOKEN` secret set it also opens the pull request in minecraft-server-setup that moves its pin to the new release. That secret is a fine-grained token (Contents and Pull requests: read and write, only on minecraft-server-setup) with an expiry of at most one year; the release checks it before using it, and `.github/workflows/setup-token.yml` checks it every Monday and fails two weeks before it expires, or at once when it is missing, revoked or set without an expiry (`scripts/check-setup-token.mjs`). `npm run build && npm run pack:release` builds the same tarball locally in `release/`.
 
